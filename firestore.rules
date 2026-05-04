@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - createdAt: string (optional, ISO 8601)
+    //
+    // Collection: /users/{userId}/enhancements/{enhancementId}
+    // Fields:
+    //   - id: string (required)
+    //   - timestamp: number (required)
+    //   - prompt: string (required, max 1000 chars)
+    //   - originalImage: string (required, base64)
+    //   - editedImage: string (required, base64)
+    //   - settings: map (optional)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email);
+    }
+
+    function isValidEnhancement(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'prompt']) &&
+             data.id is string &&
+             data.timestamp is number &&
+             data.prompt is string && data.prompt.size() <= 2000 &&
+             (!('originalImage' in data) || (data.originalImage is string && data.originalImage.size() <= 800000)) &&
+             (!('editedImage' in data) || (data.editedImage is string && data.editedImage.size() <= 800000));
+    }
+
+    function isValidFavorite(data) {
+      return data.keys().hasAll(['id', 'name', 'prompt', 'timestamp']) &&
+             data.id is string &&
+             data.name is string && data.name.size() <= 100 &&
+             data.prompt is string && data.prompt.size() <= 2000 &&
+             data.timestamp is number;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['instruction']) &&
+             data.instruction is string && data.instruction.size() <= 2000;
+    }
+
+    function isValidBatch(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'title', 'imageIds', 'thumbnails']) &&
+             data.id is string &&
+             data.timestamp is number &&
+             data.title is string && data.title.size() <= 200 &&
+             data.imageIds is list && data.imageIds.size() <= 50 &&
+             (data.imageIds.size() == 0 || data.imageIds[0] is string) &&
+             data.thumbnails is list && data.thumbnails.size() <= 10 &&
+             (data.thumbnails.size() == 0 || data.thumbnails[0] is string) &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 500)) &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    // Enhancements
+    match /users/{userId}/enhancements/{enhancementId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidEnhancement(request.resource.data);
+      allow update: if isOwner(userId) && isValidEnhancement(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+
+    // Favorites
+    match /users/{userId}/favorites/{favId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidFavorite(request.resource.data);
+      allow update: if isOwner(userId) && isValidFavorite(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+
+    // Settings
+    match /users/{userId}/settings/{settingId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidSettings(request.resource.data);
+      allow update: if isOwner(userId) && isValidSettings(request.resource.data);
+    }
+
+    // Batches
+    match /users/{userId}/batches/{batchId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidBatch(request.resource.data);
+      allow update: if isOwner(userId) && isValidBatch(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Enhancement": {
+      "title": "Enhancement",
+      "description": "A beautified real estate photo record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "prompt": { "type": "string" },
+        "originalImage": { "type": "string", "description": "Base64 string of original image" },
+        "editedImage": { "type": "string", "description": "Base64 string of beautified image" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string" },
+            "resolution": { "type": "string" }
+          }
+        }
+      },
+      "required": ["id", "timestamp", "prompt", "originalImage", "editedImage"]
+    },
+    "Batch": {
+      "title": "Batch",
+      "description": "A collection of processed images",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "title": { "type": "string" },
+        "address": { "type": "string" },
+        "imageIds": { "type": "array", "items": { "type": "string" } },
+        "thumbnails": { "type": "array", "items": { "type": "string" } },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "timestamp", "title", "imageIds", "thumbnails"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Private user profile"
+    },
+    "/users/{userId}/enhancements/{enhancementId}": {
+      "schema": "Enhancement",
+      "description": "User's private enhancement history"
+    },
+    "/users/{userId}/batches/{batchId}": {
+      "schema": "Batch",
+      "description": "User's private photo batches/collections"
+    }
+  }
+}

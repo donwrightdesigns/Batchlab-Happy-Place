@@ -1,0 +1,8 @@
+{
+  "name": "Batchlab Photo Engine BW",
+  "description": "Real Estate Batch Enhancer with Memory and Light Theme. High-quality AI photo beautification for real estate professionals using the Batchlab Photo Engine.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
