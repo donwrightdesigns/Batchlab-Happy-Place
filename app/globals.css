@@ -11,8 +11,8 @@
   --font-sans: var(--font-sans);
   --font-display: var(--font-display);
   
-  --radius-xl: 24px;
-  --radius-2xl: 32px;
+  --radius-xl: 9px;
+  --radius-2xl: 15px;
 
   @keyframes spin-slow {
     from { transform: rotate(0deg); }
@@ -37,7 +37,7 @@
   }
   
   .card {
-    @apply bg-surface rounded-xl border border-border shadow-sm overflow-hidden transition-all duration-300 hover:shadow-md;
+    @apply bg-surface rounded-xl border border-border shadow-sm overflow-hidden hover:shadow-md;
   }
 
   .glass {

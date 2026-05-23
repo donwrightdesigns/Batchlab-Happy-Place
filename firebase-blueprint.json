@@ -15,14 +15,14 @@
     },
     "Enhancement": {
       "title": "Enhancement",
-      "description": "A beautified real estate photo record",
+      "description": "A processed real estate photo record",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "timestamp": { "type": "number" },
         "prompt": { "type": "string" },
         "originalImage": { "type": "string", "description": "Base64 string of original image" },
-        "editedImage": { "type": "string", "description": "Base64 string of beautified image" },
+        "editedImage": { "type": "string", "description": "Base64 string of processed image" },
         "settings": {
           "type": "object",
           "properties": {
@@ -44,9 +44,31 @@
         "address": { "type": "string" },
         "imageIds": { "type": "array", "items": { "type": "string" } },
         "thumbnails": { "type": "array", "items": { "type": "string" } },
-        "tags": { "type": "array", "items": { "type": "string" } }
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "isSynced": { "type": "boolean" }
       },
       "required": ["id", "timestamp", "title", "imageIds", "thumbnails"]
+    },
+    "FavoritePrompt": {
+      "title": "FavoritePrompt",
+      "description": "A saved user prompt for repeated use",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "prompt": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "name", "prompt", "timestamp"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "User specific app settings",
+      "type": "object",
+      "properties": {
+        "instruction": { "type": "string" }
+      },
+      "required": ["instruction"]
     }
   },
   "firestore": {
@@ -61,6 +83,14 @@
     "/users/{userId}/batches/{batchId}": {
       "schema": "Batch",
       "description": "User's private photo batches/collections"
+    },
+    "/users/{userId}/favorites/{favId}": {
+      "schema": "FavoritePrompt",
+      "description": "User's saved favorite prompts"
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": "Settings",
+      "description": "User's saved app settings"
     }
   }
 }

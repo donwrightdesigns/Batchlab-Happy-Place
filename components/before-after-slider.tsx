@@ -93,7 +93,7 @@ export function BeforeAfterSlider({ before, after }: BeforeAfterSliderProps) {
         Original
       </div>
       <div className="absolute bottom-4 right-4 px-2 py-1 bg-accent/80 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-widest rounded pointer-events-none">
-        Beautified
+        Processed
       </div>
     </div>
   );

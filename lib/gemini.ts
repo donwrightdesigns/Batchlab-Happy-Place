@@ -9,7 +9,7 @@ if (!apiKey) {
 export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const MODELS = {
-  IMAGE_GEN_BASIC: "gemini-3.1-flash-image-preview",
+  IMAGE_GEN_BASIC: "gemini-2.5-flash-image",
   IMAGE_GEN_HQ: "gemini-3.1-flash-image-preview",
   IMAGE_GEN_PRO: "gemini-3-pro-image-preview",
   TEXT: "gemini-3-flash-preview",
@@ -18,17 +18,16 @@ export const MODELS = {
 
 export type ImageResolution = "512px" | "1K" | "2K" | "4K";
 export type ImageAspectRatio = "1:1" | "2:1" | "2:3" | "3:2" | "3:4" | "4:3" | "9:16" | "16:9" | "21:9";
-export type ImageModel = "basic" | "nano-2" | "pro";
+export type ImageModel = "nano-2";
 export type ProcessingTier = "standard" | "flex" | "batch";
 
 export async function beautifyImage(
   base64Image: string, 
   prompt: string, 
   resolution: ImageResolution = "2K",
-  modelType: ImageModel = "basic",
-  aspectRatio: ImageAspectRatio = "1:1",
+  modelType: ImageModel = "nano-2",
+  aspectRatio: ImageAspectRatio = "3:2",
   systemInstruction?: string,
-  creativeStrength: number = 0.7,
   referenceImageB64s: string[] = [],
   useContextForStyle: boolean = false,
   tier: ProcessingTier = "standard",
@@ -36,11 +35,9 @@ export async function beautifyImage(
 ) {
   if (!ai) throw new Error("AI not initialized");
 
-  let model = MODELS.IMAGE_GEN_BASIC;
-  if (modelType === "pro") model = MODELS.IMAGE_GEN_PRO;
-  if (modelType === "nano-2") model = MODELS.IMAGE_GEN_HQ;
-
-  const isHqModel = model === MODELS.IMAGE_GEN_HQ || model === MODELS.IMAGE_GEN_PRO;
+  // Locked strictly to gemini-3.1-flash-image-preview
+  const model = MODELS.IMAGE_GEN_HQ;
+  const isHqModel = true;
 
   // Extract mime type from data URL
   const mimeType = base64Image.match(/data:([^;]+);base64,/)?.[1] || "image/jpeg";
@@ -60,7 +57,7 @@ export async function beautifyImage(
   // Add reference images if provided
   if (referenceImageB64s.length > 0) {
     parts.push({ text: useContextForStyle 
-      ? "\nSTYLE REFERENCE IMAGES (Extract mood, lighting, and aesthetic style ONLY from these images. Do NOT include any of their subjects, structures, or layouts in the final image):" 
+      ? "\nSTYLE REFERENCE IMAGES (Extract mood, lighting, and aesthetic style ONLY from these images. Do NOT include in the final image):" 
       : "\nSPATIAL CONTEXT IMAGES (Use these ONLY to understand the surrounding room geometry or light sources. Do not adopt their style or subjects directly):" });
       
     referenceImageB64s.forEach((refB64, idx) => {
@@ -75,7 +72,7 @@ export async function beautifyImage(
     });
   }
 
-  const instruction = systemInstruction || "You are a real estate photo beautifier. Enhance the provided image based on the user prompt. Maintain photographic realism, enhance lighting, sky, and landscaping.";
+  const instruction = systemInstruction || "YOU ARE A MASTER PHOTOGRAPHY EDITOR.  USE LOCALIZED dodge and burn, correct technical errors, reduce iso noise, fine-tune all light sources for  consistent WHITE BALANCE, ensure sharp detailed images, LIGHTING ENHANCEMENT MAINTAINING EXACT STRUCTURAL ELEMENTS OF ANY INTERIOR SPACES.";
   parts.push({ text: `\nINSTRUCTIONS: ${instruction}\n\nUSER PROMPT: ${prompt}` });
 
   let lastError: any;
@@ -83,16 +80,12 @@ export async function beautifyImage(
     try {
       const response = await ai.models.generateContent({
         model: model,
-        contents: {
-          parts: parts,
-        },
+        contents: { role: 'user', parts },
         config: {
-          ...(isHqModel ? {
-            imageConfig: {
-              imageSize: resolution,
-              aspectRatio: aspectRatio,
-            }
-          } : {})
+          imageConfig: isHqModel ? {
+            imageSize: resolution,
+            aspectRatio: aspectRatio,
+          } : undefined
         }
       });
 
@@ -147,20 +140,23 @@ export async function analyzeImage(base64Image: string) {
 
   const response = await ai.models.generateContent({
     model: MODELS.TEXT,
-    contents: {
-      parts: [
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType,
+            },
           },
-        },
-        {
-          text: "Analyze this real estate photo. Identify technical flaws (lighting, white balance, lens distortion) and aesthetic opportunities (sky replacement, grass enhancement, decluttering). Provide a concise, professional assessment in markdown format.",
-        },
-      ],
-    },
+          {
+            text: "Analyze this photo. Identify technical flaws (lighting, white balance, lens distortion) and aesthetic opportunities (sky replacement, grass enhancement, decluttering). Provide a concise, professional assessment in markdown format.",
+          },
+        ],
+      },
+    ],
   });
 
-  return response.candidates?.[0]?.content?.parts?.[0]?.text || "Could not analyze image.";
+  return response.text || "Could not analyze image.";
 }

@@ -1,6 +1,6 @@
 {
   "name": "Batchlab Photo Engine BW",
-  "description": "Real Estate Batch Enhancer with Memory and Light Theme. High-quality AI photo beautification for real estate professionals using the Batchlab Photo Engine.",
+  "description": "Professional Real Estate Batch Enhancement Engine with AI Analysis, archived work sessions, and deep prompt customization. Powered by Gemini 3.1 Flash Image.",
   "requestFramePermissions": [
     "microphone"
   ],

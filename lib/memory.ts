@@ -1,7 +1,6 @@
 import { get, set, del } from 'idb-keyval';
 import { db, auth } from '@/firebase';
 import { collection, doc, setDoc, getDocs, deleteDoc, query, orderBy, limit, onSnapshot, getDocFromServer } from 'firebase/firestore';
-import { uploadToDrive } from './drive';
 
 export interface MemoryItem {
   id: string;
@@ -13,16 +12,20 @@ export interface MemoryItem {
   editedImage?: string;   // Base64 (Local only)
   originalThumbnail?: string; // Small Base64 for cloud
   editedThumbnail?: string;   // Small Base64 for cloud
-  originalDriveId?: string;
-  editedDriveId?: string;
   settings: any;
   isSynced?: boolean;
+  analysis?: string;
+  isAnalyzing?: boolean;
+  usedAnalysis?: boolean;
+  finalPrompt?: string;
+  systemInstruction?: string;
 }
 
 export interface FavoritePrompt {
   id: string;
   name: string;
   prompt: string;
+  systemInstruction?: string;
   timestamp: number;
 }
 
@@ -35,6 +38,8 @@ export interface Batch {
   thumbnails: string[]; // Array of strings (base64 edited thumbnails)
   tags?: string[];
   isSynced?: boolean;
+  prompt?: string;
+  systemInstruction?: string;
 }
 
 const MEMORY_KEY = 'rebe_memory';
@@ -122,23 +127,14 @@ async function prepareForCloud(item: MemoryItem): Promise<MemoryItem> {
     cloudItem.editedThumbnail = await compressImage(item.editedImage, 300, 0.4);
   }
 
-  // Upload to Drive if possible
-  if (item.originalImage && !item.originalDriveId) {
-    const driveId = await uploadToDrive(item.originalImage, `original_${item.id}.jpg`);
-    if (driveId) cloudItem.originalDriveId = driveId;
-  }
-  
-  if (item.editedImage && !item.editedDriveId) {
-    const driveId = await uploadToDrive(item.editedImage, `beautified_${item.id}.jpg`);
-    if (driveId) cloudItem.editedDriveId = driveId;
-  }
-
   // Remove base64 from cloud item to save space in Firestore
   delete cloudItem.originalImage;
   delete cloudItem.editedImage;
   
   return cloudItem;
 }
+
+let memoryMutex = Promise.resolve();
 
 export async function saveToMemory(item: MemoryItem) {
   let itemToSave = { ...item };
@@ -151,38 +147,41 @@ export async function saveToMemory(item: MemoryItem) {
     itemToSave.editedThumbnail = await compressImage(item.editedImage, 400, 0.6);
   }
 
-  // Store full images separately in local DB so we don't freeze the browser
-  const imageDataKey = `image_data_${itemToSave.id}`;
-  if (itemToSave.originalImage || itemToSave.editedImage) {
-    // Merge with existing image data if present to avoid losing original when saving completed edited
-    const existingImageData = await get<{originalImage?: string, editedImage?: string}>(imageDataKey);
-    await set(imageDataKey, {
-      originalImage: itemToSave.originalImage || existingImageData?.originalImage,
-      editedImage: itemToSave.editedImage || existingImageData?.editedImage
-    });
-    // Remove base64 from main list to save extreme RAM usage
-    delete itemToSave.originalImage;
-    delete itemToSave.editedImage;
-  }
+  // Use a mutex to prevent race conditions on indexeddb get/set during concurrent batch processing
+  await (memoryMutex = memoryMutex.then(async () => {
+    // Store full images separately in local DB so we don't freeze the browser
+    const imageDataKey = `image_data_${itemToSave.id}`;
+    if (itemToSave.originalImage || itemToSave.editedImage) {
+      // Merge with existing image data if present to avoid losing original when saving completed edited
+      const existingImageData = await get<{originalImage?: string, editedImage?: string}>(imageDataKey);
+      await set(imageDataKey, {
+        originalImage: itemToSave.originalImage || existingImageData?.originalImage,
+        editedImage: itemToSave.editedImage || existingImageData?.editedImage
+      });
+      // Remove base64 from main list to save extreme RAM usage
+      delete itemToSave.originalImage;
+      delete itemToSave.editedImage;
+    }
 
-  // Save to local storage (FAST - no network)
-  const currentMemory = (await get<MemoryItem[]>(MEMORY_KEY)) || [];
-  const existingIndex = currentMemory.findIndex(m => m.id === itemToSave.id);
-  
-  let updatedMemory: MemoryItem[];
-  if (existingIndex !== -1) {
-    updatedMemory = [...currentMemory];
-    updatedMemory[existingIndex] = { ...updatedMemory[existingIndex], ...itemToSave };
-  } else {
-    updatedMemory = [itemToSave, ...currentMemory].slice(0, 100); // More history
-  }
-  
-  await set(MEMORY_KEY, updatedMemory);
-  
-  // Notify local listeners
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(MEMORY_UPDATE_EVENT, { detail: updatedMemory }));
-  }
+    // Save to local storage (FAST - no network)
+    const currentMemory = (await get<MemoryItem[]>(MEMORY_KEY)) || [];
+    const existingIndex = currentMemory.findIndex(m => m.id === itemToSave.id);
+    
+    let updatedMemory: MemoryItem[];
+    if (existingIndex !== -1) {
+      updatedMemory = [...currentMemory];
+      updatedMemory[existingIndex] = { ...updatedMemory[existingIndex], ...itemToSave };
+    } else {
+      updatedMemory = [itemToSave, ...currentMemory].slice(0, 100); // More history
+    }
+    
+    await set(MEMORY_KEY, updatedMemory);
+    
+    // Notify local listeners
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(MEMORY_UPDATE_EVENT, { detail: updatedMemory }));
+    }
+  }).catch(e => console.error(e)));
 
   // Defer cloud sync so it doesn't block processing
   if (auth.currentUser && (item.status === 'completed' || item.status === 'error')) {
@@ -333,10 +332,7 @@ export function subscribeToMemory(userId: string, callback: (items: MemoryItem[]
             return {
                ...cloudItem,
                originalThumbnail: localMatch.originalThumbnail || cloudItem.originalThumbnail,
-               editedThumbnail: localMatch.editedThumbnail || cloudItem.editedThumbnail,
-               // KeepDrive IDs
-               originalDriveId: cloudItem.originalDriveId || localMatch.originalDriveId,
-               editedDriveId: cloudItem.editedDriveId || localMatch.editedDriveId
+               editedThumbnail: localMatch.editedThumbnail || cloudItem.editedThumbnail
             };
          }
          return cloudItem;
@@ -381,9 +377,7 @@ export async function syncLocalToFirestore(userId: string) {
 
       const cloudItem = await prepareForCloud(fullItemToSync);
       
-      // Update local memory with Drive IDs and sync status
-      localMemory[i].originalDriveId = cloudItem.originalDriveId;
-      localMemory[i].editedDriveId = cloudItem.editedDriveId;
+      // Update local memory with sync status
       localMemory[i].isSynced = true;
       localUpdated = true;
 
