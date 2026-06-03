@@ -10,8 +10,8 @@ export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const MODELS = {
   IMAGE_GEN_BASIC: "gemini-2.5-flash-image",
-  IMAGE_GEN_HQ: "gemini-3.1-flash-image-preview",
-  IMAGE_GEN_PRO: "gemini-3-pro-image-preview",
+  IMAGE_GEN_HQ: "gemini-3.1-flash-image",
+  IMAGE_GEN_PRO: "gemini-3-pro-image",
   TEXT: "gemini-3-flash-preview",
   LIVE: "gemini-3.1-flash-live-preview",
 };
@@ -28,8 +28,6 @@ export async function beautifyImage(
   modelType: ImageModel = "nano-2",
   aspectRatio: ImageAspectRatio = "3:2",
   systemInstruction?: string,
-  referenceImageB64s: string[] = [],
-  useContextForStyle: boolean = false,
   tier: ProcessingTier = "standard",
   retries = 3
 ) {
@@ -54,25 +52,9 @@ export async function beautifyImage(
     },
   });
 
-  // Add reference images if provided
-  if (referenceImageB64s.length > 0) {
-    parts.push({ text: useContextForStyle 
-      ? "\nSTYLE REFERENCE IMAGES (Extract mood, lighting, and aesthetic style ONLY from these images. Do NOT include in the final image):" 
-      : "\nSPATIAL CONTEXT IMAGES (Use these ONLY to understand the surrounding room geometry or light sources. Do not adopt their style or subjects directly):" });
-      
-    referenceImageB64s.forEach((refB64, idx) => {
-      const refMime = refB64.match(/data:([^;]+);base64,/)?.[1] || "image/jpeg";
-      const refData = refB64.includes(",") ? refB64.split(",")[1] : refB64;
-      parts.push({
-        inlineData: {
-          data: refData,
-          mimeType: refMime,
-        },
-      });
-    });
-  }
+const instruction = systemInstruction || 
+  "Act as a professional image editor and 3D design specialist with a fine-art background. Correct sharpness, focus, and lens distortion first. Apply localized neutral white balance across all light sources and remove color casts. Reduce high-ISO noise while preserving detail. Increase micro-contrast and clarity for clean, well-defined structure. Apply a subtle Kodak Ektachrome film effect.";
 
-  const instruction = systemInstruction || "YOU ARE A MASTER PHOTOGRAPHY EDITOR.  USE LOCALIZED dodge and burn, correct technical errors, reduce iso noise, fine-tune all light sources for  consistent WHITE BALANCE, ensure sharp detailed images, LIGHTING ENHANCEMENT MAINTAINING EXACT STRUCTURAL ELEMENTS OF ANY INTERIOR SPACES.";
   parts.push({ text: `\nINSTRUCTIONS: ${instruction}\n\nUSER PROMPT: ${prompt}` });
 
   let lastError: any;
@@ -80,7 +62,7 @@ export async function beautifyImage(
     try {
       const response = await ai.models.generateContent({
         model: model,
-        contents: { role: 'user', parts },
+        contents: { parts: parts },
         config: {
           imageConfig: isHqModel ? {
             imageSize: resolution,
@@ -151,7 +133,7 @@ export async function analyzeImage(base64Image: string) {
             },
           },
           {
-            text: "Analyze this photo. Identify technical flaws (lighting, white balance, lens distortion) and aesthetic opportunities (sky replacement, grass enhancement, decluttering). Provide a concise, professional assessment in markdown format.",
+            text: "Analyze this photo as well as adjacent similar photos. Identify weaknesses or flaws common  and provide 3-5 instructions to be passed as pre-user-prompt instruction",
           },
         ],
       },

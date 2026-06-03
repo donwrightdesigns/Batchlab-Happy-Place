@@ -98,7 +98,6 @@ export default function REBEPage() {
   const [aspectRatio, setAspectRatio] = useState<any>('3:2');
   const model: ImageModel = 'nano-2';
   const [suffix, setSuffix] = useState('_nano');
-  const [contextFiles, setContextFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [memory, setMemory] = useState<MemoryItem[]>([]);
   const [showMemory, setShowMemory] = useState(false);
@@ -111,8 +110,7 @@ export default function REBEPage() {
   const [concurrencyLimit, setConcurrencyLimit] = useState(2);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [tier, setTier] = useState<ProcessingTier>('standard');
-  const [useContextForStyle, setUseContextForStyle] = useState(false);
-  const [systemInstruction, setSystemInstruction] = useState("You are an expert photography retoucher with no tolerance for technical imperfections and off-balance color or mixed white balance. Every image you work on is ready for gallery showings but remains grounded in reality. \n\nMaintain the exact structural integrity and perspective of the 'TARGET IMAGE'. Use 'SPATIAL CONTEXT' images only to understand the room's geometry and light sources. Use 'STYLE REFERENCE' images only if explicitly requested for aesthetic cues. Return ONLY the edited image data.");
+  const [systemInstruction, setSystemInstruction] = useState("You are an expert photography retoucher with no tolerance for technical imperfections and off-balance color or mixed white balance. Every image you work on is ready for gallery showings but remains grounded in reality. Maintain the exact structural integrity and perspective of the 'TARGET IMAGE'. Return ONLY the edited image data.");
   const [favorites, setFavorites] = useState<FavoritePrompt[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [showRecentPrompts, setShowRecentPrompts] = useState(false);
@@ -359,19 +357,6 @@ export default function REBEPage() {
     accept: { 'image/*': [] },
   });
 
-  const onDropContext = useCallback((acceptedFiles: File[]) => {
-    setContextFiles(prev => [...prev, ...acceptedFiles]);
-  }, []);
-
-  const { getRootProps: getContextRootProps, getInputProps: getContextInputProps, isDragActive: isContextDragActive } = useDropzone({
-    onDrop: onDropContext,
-    accept: { 'image/*': [], 'application/pdf': [], 'text/plain': [] },
-  });
-
-  const removeContextFile = (index: number) => {
-    setContextFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
   const removeImage = (id: string) => {
     const imgToRemove = images.find(img => img.id === id);
     if (imgToRemove?.resultPreview) {
@@ -392,19 +377,6 @@ export default function REBEPage() {
       return;
     }
     setTotalToProcess(imagesToProcess.length);
-
-    // Prepare context
-    let contextText = "";
-    if (contextFiles.length > 0) {
-      contextText = `\nAdditional context from files: ${contextFiles.map(f => f.name).join(', ')}`;
-    }
-
-    // Load reference images as base64
-    const referenceImageB64s = await Promise.all(
-      contextFiles
-        .filter(f => f.type.startsWith('image/'))
-        .map(f => fileToBase64(f))
-    );
 
     const processImage = async (img: ImageFile) => {
       if (img.status === 'completed') return img;
@@ -442,13 +414,11 @@ export default function REBEPage() {
 
         const result = await beautifyImage(
           originalBase64, 
-          prompt + contextText, 
+          prompt, 
           resolution, 
           model, 
           aspectRatio, 
           systemInstruction, 
-          referenceImageB64s,
-          useContextForStyle,
           tier
         );
         
@@ -570,7 +540,7 @@ export default function REBEPage() {
     }
 
     setIsProcessing(false);
-  }, [images, isProcessing, prompt, resolution, model, aspectRatio, contextFiles, fileToBase64, concurrencyLimit, systemInstruction, isBatchMode, useContextForStyle, propertyAddress, tier, addNetworkLog, updateNetworkLog]);
+  }, [images, isProcessing, prompt, resolution, model, aspectRatio, fileToBase64, concurrencyLimit, systemInstruction, isBatchMode, propertyAddress, tier, addNetworkLog, updateNetworkLog]);
 
   const reprocessSingle = useCallback(async (createNewVariation: boolean = false) => {
     if (!selectedImage || selectedImage.status === 'processing') return;
@@ -605,13 +575,6 @@ export default function REBEPage() {
     }
 
     try {
-      // Load reference images as base64
-      const referenceImageB64s = await Promise.all(
-        contextFiles
-          .filter(f => f.type.startsWith('image/'))
-          .map(f => fileToBase64(f))
-      );
-
       const base64 = await fileToBase64(selectedImage.file);
       const result = await beautifyImage(
         base64, 
@@ -620,8 +583,6 @@ export default function REBEPage() {
         model, 
         aspectRatio, 
         systemInstruction, 
-        referenceImageB64s,
-        useContextForStyle,
         tier
       );
       
@@ -665,7 +626,7 @@ export default function REBEPage() {
         img.id === targetId ? { ...img, status: 'error', error: 'Failed to re-process' } : img
       ));
     }
-  }, [selectedImage, reprocessPrompt, resolution, model, aspectRatio, fileToBase64, systemInstruction, contextFiles, useContextForStyle, tier]);
+  }, [selectedImage, reprocessPrompt, resolution, model, aspectRatio, fileToBase64, systemInstruction, tier]);
 
   const downloadAll = async () => {
     const zip = new JSZip();
@@ -1755,71 +1716,6 @@ export default function REBEPage() {
                 </section>
 
                 <hr className="border-border" />
-                <section>
-                  <div className="flex items-center justify-between mb-3">
-                    <label className="text-xs font-bold uppercase tracking-widest text-text-muted block">Additional Context Files</label>
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted group-hover:text-accent transition-colors">Use for Style</span>
-                      <div className="relative inline-flex items-center">
-                        <input 
-                          type="checkbox" 
-                          checked={useContextForStyle}
-                          onChange={(e) => setUseContextForStyle(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-7 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-accent"></div>
-                      </div>
-                    </label>
-                  </div>
-                  <p className="text-[10px] text-text-muted mb-2 font-medium">Add photos to help the AI understand the layout (Spatial Context) or the desired look (Style Reference).</p>
-                  
-                  <div className="flex flex-col gap-2">
-                    <label className="border-2 border-dashed border-border rounded-xl p-3 text-center cursor-pointer hover:bg-bg transition-colors flex flex-col items-center gap-1 group">
-                      <Upload className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors" />
-                      <span className="text-xs text-text-muted font-medium">Add Reference Images</span>
-                      <input
-                        type="file"
-                        multiple
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          if (e.target.files) {
-                            setContextFiles(prev => [...prev, ...Array.from(e.target.files!)]);
-                          }
-                        }}
-                      />
-                    </label>
-                    
-                    <AnimatePresence>
-                      {contextFiles.length > 0 && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: -10 }} 
-                          animate={{ opacity: 1, y: 0 }}
-                          className="flex flex-col gap-2 mt-2 bg-gray-50/50 p-2 rounded-xl border border-gray-100"
-                        >
-                          {contextFiles.map((file, idx) => (
-                            <div key={`${file.name}-${idx}`} className="flex items-center justify-between p-2 bg-white rounded-lg border border-border shadow-sm text-xs">
-                              <div className="flex items-center gap-2 truncate pr-2">
-                                <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center shrink-0">
-                                  <ImageIcon className="w-3 h-3 text-gray-400" />
-                                </div>
-                                <span className="truncate text-gray-700 font-medium">{file.name}</span>
-                              </div>
-                              <button
-                                onClick={() => setContextFiles(prev => prev.filter((_, i) => i !== idx))}
-                                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </section>
-
-                <hr className="border-border" />
 
                 {/* Prompt Debugger */}
                 <section>
@@ -1876,11 +1772,6 @@ export default function REBEPage() {
                           <div className="p-2 bg-gray-900 rounded-lg border border-gray-800">
                             <p className="text-[9px] font-mono text-blue-400/80 leading-relaxed break-words">
                               {prompt}
-                              {contextFiles.length > 0 && (
-                                <span className="text-gray-500">
-                                  {"\n"}Additional context from files: {contextFiles.map(f => f.name).join(', ')}
-                                </span>
-                              )}
                             </p>
                           </div>
                         </div>
@@ -2113,19 +2004,19 @@ export default function REBEPage() {
                     <div className="flex gap-2 mt-2">
                       <button 
                         onClick={() => reprocessSingle(false)}
-                        disabled={selectedImage.status === 'processing' || selectedImage.status === 'pending' || (isProcessing && selectedImage.status !== 'completed')}
+                        disabled={selectedImage.status === 'processing' || (isProcessing && selectedImage.status !== 'completed')}
                         className="flex-1 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
                         {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-white/50" />}
-                        {selectedImage.status === 'pending' || (isProcessing && selectedImage.status !== 'completed') ? 'Queue' : selectedImage.status === 'processing' ? 'Working' : 'Redo'}
+                        {(isProcessing && selectedImage.status !== 'completed') ? 'Queue' : selectedImage.status === 'processing' ? 'Working' : 'Redo'}
                       </button>
                       <button 
                         onClick={() => reprocessSingle(true)}
-                        disabled={selectedImage.status === 'processing' || selectedImage.status === 'pending' || (isProcessing && selectedImage.status !== 'completed')}
+                        disabled={selectedImage.status === 'processing' || (isProcessing && selectedImage.status !== 'completed')}
                         className="flex-1 py-2 bg-accent/20 hover:bg-accent/30 text-accent disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
                         {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                        {selectedImage.status === 'pending' || (isProcessing && selectedImage.status !== 'completed') ? 'Queue' : selectedImage.status === 'processing' ? 'Working' : 'New Variation'}
+                        {(isProcessing && selectedImage.status !== 'completed') ? 'Queue' : selectedImage.status === 'processing' ? 'Working' : 'New Variation'}
                       </button>
                     </div>
                   </div>
