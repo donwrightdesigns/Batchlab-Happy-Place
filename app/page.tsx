@@ -93,6 +93,11 @@ const dataUrlToBlobUrl = async (dataUrl: string) => {
 
 export default function REBEPage() {
   const [images, setImages] = useState<ImageFile[]>([]);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
   const [prompt, setPrompt] = useState('High noon, diffused sunlight conversion with corrected verticals and improved sharpness, color and color balance.');
   const [resolution, setResolution] = useState<ImageResolution>('2K');
   const [aspectRatio, setAspectRatio] = useState<any>('3:2');
