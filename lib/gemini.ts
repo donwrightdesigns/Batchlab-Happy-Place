@@ -10,7 +10,7 @@ export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const MODELS = {
   IMAGE_GEN_BASIC: "gemini-2.5-flash-image",
-  IMAGE_GEN_HQ: "gemini-3.1-flash-image",
+  IMAGE_GEN_HQ: "gemini-3.1-flash-image-preview",
   IMAGE_GEN_PRO: "gemini-3-pro-image",
   TEXT: "gemini-3-flash-preview",
   LIVE: "gemini-3.1-flash-live-preview",
@@ -53,7 +53,7 @@ export async function beautifyImage(
   });
 
 const instruction = systemInstruction || 
-  "Act as a professional image editor and 3D design specialist with a fine-art background. Correct sharpness, focus, and lens distortion first. Apply localized neutral white balance across all light sources and remove color casts. Reduce high-ISO noise while preserving detail. Increase micro-contrast and clarity for clean, well-defined structure. Apply a subtle Kodak Ektachrome film effect.";
+  "Act as a professional photo editor and 3D design specialist with a fine-art background. Correct sharpness, focus, and lens distortion and localized neutral white balance for all sources and remove color casts. Reduce high-ISO noise and enhanced micro-contrast and detail.";
 
   parts.push({ text: `\nINSTRUCTIONS: ${instruction}\n\nUSER PROMPT: ${prompt}` });
 
@@ -133,7 +133,7 @@ export async function analyzeImage(base64Image: string) {
             },
           },
           {
-            text: "Analyze this photo as well as adjacent similar photos. Identify weaknesses or flaws common  and provide 3-5 instructions to be passed as pre-user-prompt instruction",
+            text: "Analyze and Identify weaknesses or flaws. provide 3-5 post-production solutions to be passed as editor instruction",
           },
         ],
       },

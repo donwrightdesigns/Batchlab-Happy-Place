@@ -51,7 +51,7 @@ const BATCHES_UPDATE_EVENT = 'rebe_batches_updated';
 const FAVORITES_UPDATE_EVENT = 'rebe_favorites_updated';
 
 // Helper to compress base64 images for Firestore (1MB limit)
-async function compressImage(base64: string, maxWidth = 800, quality = 0.7): Promise<string> {
+async function compressImage(base64: string, maxWidth = 1400, quality = 0.7): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64;
@@ -439,6 +439,9 @@ export async function deleteFavoritePrompt(id: string) {
 
 export function subscribeToFavorites(callback: (items: FavoritePrompt[]) => void, onError?: (error: any) => void) {
   if (typeof window === 'undefined') return () => {};
+  
+  // Load initial local favorites
+  getFavoritePrompts().then(callback);
   
   const handler = (e: any) => callback(e.detail);
   window.addEventListener(FAVORITES_UPDATE_EVENT, handler);
