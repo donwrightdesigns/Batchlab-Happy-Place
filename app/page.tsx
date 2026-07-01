@@ -32,7 +32,7 @@ import {
   RefreshCw,
   MessageSquare
 } from 'lucide-react';
-import { beautifyImage, analyzeImage, ImageResolution, ImageModel, ProcessingTier } from '@/lib/gemini';
+import { beautifyImage, analyzeImage, ImageResolution, ImageModel, ProcessingTier, OperationMode, MediaType } from '@/lib/gemini';
 import { 
   saveToMemory, 
   getMemory, 
@@ -77,6 +77,7 @@ interface ImageFile {
   usedAnalysis?: boolean;
   finalPrompt?: string;
   memoryId?: string; // Link to the enhancement record
+  mediaType?: MediaType;
 }
 
 // Helper to convert data URL to Blob URL
@@ -100,7 +101,7 @@ export default function REBEPage() {
   }, []);
   const [prompt, setPrompt] = useState('High noon, diffused sunlight conversion with corrected verticals and improved sharpness, color and color balance.');
   const [resolution, setResolution] = useState<ImageResolution>('2K');
-  const [aspectRatio, setAspectRatio] = useState<any>('3:2');
+  const [aspectRatio, setAspectRatio] = useState<any>('auto');
   const model: ImageModel = 'nano-2';
   const [suffix, setSuffix] = useState('_nano');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -115,8 +116,10 @@ export default function REBEPage() {
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
   const [concurrencyLimit, setConcurrencyLimit] = useState(2);
   const [isBatchMode, setIsBatchMode] = useState(false);
-  const [tier, setTier] = useState<ProcessingTier>('standard');
-  const [systemInstruction, setSystemInstruction] = useState("You are an expert photography retoucher with no tolerance for technical imperfections and off-balance color or mixed white balance. Every image you work on is ready for gallery showings but remains grounded in reality. Maintain the exact structural integrity and perspective of the 'TARGET IMAGE'. Return ONLY the edited image data.");
+  const [tier, setTier] = useState<ProcessingTier>('flex');
+  const [opMode, setOpMode] = useState<OperationMode>('edit');
+  const [mediaType, setMediaType] = useState<MediaType>('image');
+  const [systemInstruction, setSystemInstruction] = useState("You are an expert photography retoucher");
   const [favorites, setFavorites] = useState<FavoritePrompt[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [showRecentPrompts, setShowRecentPrompts] = useState(false);
@@ -378,6 +381,75 @@ export default function REBEPage() {
     if (selectedImage?.id === id) setSelectedImage(null);
   };
 
+  const generateFromScratch = useCallback(async () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+
+    const newId = crypto.randomUUID();
+    const newImg: ImageFile = {
+      id: newId,
+      file: new File([], 'generated.jpg', { type: 'image/jpeg' }),
+      preview: '', // No original
+      status: 'processing',
+      finalPrompt: prompt,
+      mediaType
+    };
+
+    setImages(prev => [newImg, ...prev]);
+    setSelectedImage(newImg);
+
+    try {
+      const finalResult = await beautifyImage(
+        '', // No base64
+        prompt, 
+        resolution, 
+        model, 
+        aspectRatio, 
+        systemInstruction, 
+        tier,
+        opMode,
+        mediaType
+      );
+
+      const timestamp = Date.now();
+      const memId = crypto.randomUUID();
+      const updatedImg: ImageFile = {
+        ...newImg,
+        status: 'completed',
+        resultPreview: await dataUrlToBlobUrl(finalResult),
+        memoryId: memId
+      };
+
+      setImages(prev => prev.map(img => img.id === newId ? updatedImg : img));
+      setSelectedImage(updatedImg);
+
+      await saveToMemory({
+        id: memId,
+        prompt: prompt,
+        timestamp,
+        originalThumbnail: '', // None
+        originalImage: '',
+        editedThumbnail: finalResult, // Using final result as thumbnail for simplicity
+        editedImage: finalResult,
+        status: 'completed',
+        address: propertyAddress.trim() || undefined,
+        tags: ['generated']
+      });
+
+    } catch (error: any) {
+      console.error(error);
+      const failedImg: ImageFile = {
+        ...newImg,
+        status: 'error',
+        error: error.message || 'Generation failed'
+      };
+      setImages(prev => prev.map(img => img.id === newId ? failedImg : img));
+      setSelectedImage(failedImg);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [isProcessing, prompt, resolution, model, aspectRatio, systemInstruction, tier, opMode, propertyAddress]);
+
   const processBatch = useCallback(async () => {
     if (images.length === 0 || isProcessing) return;
     setIsProcessing(true);
@@ -431,7 +503,9 @@ export default function REBEPage() {
           model, 
           aspectRatio, 
           systemInstruction, 
-          tier
+          tier,
+          opMode,
+          mediaType
         );
         
         // Maintain EXIF
@@ -448,7 +522,8 @@ export default function REBEPage() {
           ...img,
           status: 'completed',
           resultPreview: await dataUrlToBlobUrl(finalResult),
-          memoryId
+          memoryId,
+          mediaType
         };
 
         setProcessedCount(prev => prev + 1);
@@ -608,7 +683,9 @@ export default function REBEPage() {
         model, 
         aspectRatio, 
         systemInstruction, 
-        tier
+        tier,
+        opMode,
+        mediaType
       );
       
       // Maintain EXIF
@@ -629,7 +706,8 @@ export default function REBEPage() {
         usedAnalysis: hasAnalysis,
         finalPrompt: currentPrompt,
         resultPreview: await dataUrlToBlobUrl(finalResult),
-        memoryId
+        memoryId,
+        mediaType
       };
       
       setImages(prev => prev.map(img => img.id === targetId ? updatedImg : img));
@@ -868,12 +946,50 @@ export default function REBEPage() {
             
             {/* Quick Settings Toolbar */}
             <div className="flex flex-wrap items-center gap-1.5 mb-3">
-              <div 
-                className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider bg-accent/10 border border-accent/20 text-accent px-2.5 py-1 rounded-md cursor-default select-none"
-                title="AI Model is locked to Gemini 3.1 Flash Image Preview"
-              >
-                <span>🍌🍌</span>
-                <span>Gemini 3.1 Flash Image Preview</span>
+              <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-md border border-gray-200 shadow-inner">
+                <button
+                  onClick={() => setOpMode('edit')}
+                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
+                    opMode === 'edit' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  title="Enhance existing media"
+                >
+                  <Edit3 size={10} />
+                  Edit
+                </button>
+                <button
+                  onClick={() => setOpMode('create')}
+                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
+                    opMode === 'create' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  title="Generate from scratch"
+                >
+                  <Sparkles size={10} />
+                  Create
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-md border border-gray-200 shadow-inner">
+                <button
+                  onClick={() => setMediaType('image')}
+                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
+                    mediaType === 'image' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  title="Image Mode"
+                >
+                  <ImageIcon size={10} />
+                  Image
+                </button>
+                <button
+                  onClick={() => setMediaType('video')}
+                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
+                    mediaType === 'video' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  title="Video Mode"
+                >
+                  <Sparkles size={10} className="text-purple-500" />
+                  Video
+                </button>
               </div>
 
               <button 
@@ -892,6 +1008,7 @@ export default function REBEPage() {
                   className="appearance-none flex items-center pr-5 text-[9px] font-bold uppercase tracking-wider bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 py-1 rounded-md transition-colors outline-none cursor-pointer"
                   title="Aspect Ratio"
                 >
+                  <option value="auto">AUTO</option>
                   {['1:1', '2:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9'].map(r => (
                     <option key={r} value={r}>{r}</option>
                   ))}
@@ -899,25 +1016,21 @@ export default function REBEPage() {
                 <ChevronRight size={8} className="absolute right-1.5 top-1.5 text-gray-400 rotate-90 pointer-events-none" />
               </div>
 
-              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200 shadow-inner">
-                {(['standard', 'flex', 'batch'] as ProcessingTier[]).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => {
-                      setTier(t);
-                      setIsBatchMode(t === 'batch');
-                    }}
-                    className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all flex items-center gap-1.5 ${
-                      tier === t 
-                        ? 'bg-white text-black shadow-md scale-[1.02]' 
-                        : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                    title={t === 'batch' ? 'Batch Processing (Lowest Priority)' : t === 'flex' ? 'Flex Priority' : 'Standard Priority'}
-                  >
-                    {t === 'batch' && <Clock size={10} />}
-                    {t}
-                  </button>
-                ))}
+              <div className="relative group">
+                <select 
+                  value={tier}
+                  onChange={(e) => {
+                    setTier(e.target.value as ProcessingTier);
+                    setIsBatchMode(e.target.value === 'batch');
+                  }}
+                  className="appearance-none flex items-center pr-5 text-[9px] font-bold uppercase tracking-wider bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 py-1 rounded-md transition-colors outline-none cursor-pointer"
+                  title="Processing Tier (Paygo)"
+                >
+                  <option value="standard">STD</option>
+                  <option value="flex">FLEX</option>
+                  <option value="batch">BATCH</option>
+                </select>
+                <ChevronRight size={8} className="absolute right-1.5 top-1.5 text-gray-400 rotate-90 pointer-events-none" />
               </div>
             </div>
 
@@ -1088,11 +1201,17 @@ export default function REBEPage() {
 
           <div className="mt-4">
             <button 
-              onClick={processBatch}
-              disabled={images.length === 0 || isProcessing}
+              onClick={() => {
+                if (opMode !== 'edit' && images.length === 0) {
+                  generateFromScratch();
+                } else {
+                  processBatch();
+                }
+              }}
+              disabled={(opMode === 'edit' && images.length === 0) || isProcessing}
               className={`
                 btn-primary w-full py-4 flex items-center justify-center gap-2 text-[11px] font-bold tracking-widest uppercase rounded-2xl
-                ${(images.length === 0 || isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}
+                ${((opMode === 'edit' && images.length === 0) || isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}
                 ${isBatchMode ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20' : ''}
               `}
             >
@@ -1104,7 +1223,11 @@ export default function REBEPage() {
               ) : (
                 <>
                   {isBatchMode ? <Layers className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                  <span>{isBatchMode ? `Process ${images.length > 0 ? images.length : ''} in Batch` : `Beautify ${images.length > 0 ? images.length : ''} Photo${images.length !== 1 ? 's' : ''}`}</span>
+                  <span>
+                    {opMode !== 'edit' && images.length === 0 
+                      ? 'Generate Image' 
+                      : (isBatchMode ? `Process ${images.length > 0 ? images.length : ''} in Batch` : `${opMode === 'edit' ? 'Beautify' : 'Generate'} ${images.length > 0 ? images.length : ''} Photo${images.length !== 1 ? 's' : ''}`)}
+                  </span>
                 </>
               )}
             </button>
@@ -1183,12 +1306,24 @@ export default function REBEPage() {
                     className="card group relative"
                   >
                     <div className="aspect-[4/3] relative bg-gray-200 cursor-pointer overflow-hidden rounded-md">
-                      <img 
-                        src={img.resultPreview || img.preview} 
-                        alt="Preview" 
-                        className={`w-full h-full object-cover transition-all duration-500 ${img.status === 'processing' ? 'blur-sm grayscale' : ''}`}
-                        onClick={() => openImageDetail(img)}
-                      />
+                      {img.mediaType === 'video' && img.resultPreview ? (
+                        <video 
+                          src={img.resultPreview}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          className={`w-full h-full object-cover transition-all duration-500 ${img.status === 'processing' ? 'blur-sm grayscale' : ''}`}
+                          onClick={() => openImageDetail(img)}
+                        />
+                      ) : (
+                        <img 
+                          src={img.resultPreview || img.preview} 
+                          alt="Preview" 
+                          className={`w-full h-full object-cover transition-all duration-500 ${img.status === 'processing' ? 'blur-sm grayscale' : ''}`}
+                          onClick={() => openImageDetail(img)}
+                        />
+                      )}
                       
                       {img.status === 'processing' && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
@@ -1577,14 +1712,22 @@ export default function REBEPage() {
                           <div className="grid grid-cols-2 gap-3 mb-4">
                               <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-gray-50 border border-gray-100">
                                 {(item.originalThumbnail || item.originalImage) ? (
-                                  <img src={item.originalThumbnail || item.originalImage} className="w-full h-full object-cover" alt="Original" />
+                                  item.mediaType === 'video' && (item.originalThumbnail || item.originalImage)?.includes('video') ? (
+                                    <video src={item.originalThumbnail || item.originalImage} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                                  ) : (
+                                    <img src={item.originalThumbnail || item.originalImage} className="w-full h-full object-cover" alt="Original" />
+                                  )
                                 ) : (
                                   <div className="w-full h-full flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
                                 )}
                               </div>
                               <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-gray-100 border border-gray-100">
                                 {(item.editedThumbnail || item.editedImage) ? (
-                                  <img src={item.editedThumbnail || item.editedImage} className="w-full h-full object-cover" alt="Edited" />
+                                  item.mediaType === 'video' ? (
+                                    <video src={item.editedThumbnail || item.editedImage} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                                  ) : (
+                                    <img src={item.editedThumbnail || item.editedImage} className="w-full h-full object-cover" alt="Edited" />
+                                  )
                                 ) : (
                                   <div className="w-full h-full flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
                                 )}
@@ -1843,46 +1986,65 @@ export default function REBEPage() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="relative w-full max-w-6xl h-[85vh] bg-[#1A1C1E] rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row"
+              className="relative w-full max-w-6xl h-full md:h-[85vh] bg-[#1A1C1E] md:rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row"
             >
-              <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden group/viewer">
+              <div className="w-full h-[55vh] md:h-full shrink-0 md:shrink md:flex-1 relative bg-black flex items-center justify-center overflow-hidden group/viewer">
                 {selectedImage.resultPreview || selectedImage.result ? (
-                  showSlider ? (
+                  showSlider && selectedImage.preview ? (
                     <BeforeAfterSlider 
                       before={selectedImage.preview} 
                       after={selectedImage.resultPreview || selectedImage.result!} 
                     />
                   ) : (
-                    <img 
-                      src={selectedImage.resultPreview || selectedImage.result} 
-                      className="max-w-full max-h-full object-contain"
-                      alt="Result"
-                    />
+                    selectedImage.mediaType === 'video' && selectedImage.resultPreview ? (
+                      <video 
+                        src={selectedImage.resultPreview}
+                        autoPlay
+                        loop
+                        playsInline
+                        controls
+                        className="max-w-full max-h-full object-contain"
+                      />
+                    ) : (
+                      <img 
+                        src={selectedImage.resultPreview || selectedImage.result} 
+                        className="max-w-full max-h-full object-contain"
+                        alt="Result"
+                      />
+                    )
                   )
                 ) : (
-                  <img 
-                    src={selectedImage.preview} 
-                    className="max-w-full max-h-full object-contain"
-                    alt="Detail"
-                  />
+                  selectedImage.mediaType === 'video' && selectedImage.preview && selectedImage.preview.includes('blob:') ? (
+                    <video 
+                      src={selectedImage.preview} 
+                      className="max-w-full max-h-full object-contain"
+                      autoPlay loop muted playsInline
+                    />
+                  ) : (
+                    <img 
+                      src={selectedImage.preview || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='} 
+                      className="max-w-full max-h-full object-contain"
+                      alt="Detail"
+                    />
+                  )
                 )}
                 
                 {/* Navigation Arrows */}
                 <button 
                   onClick={(e) => { e.stopPropagation(); goToPreviousImage(); }}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all opacity-0 group-hover/viewer:opacity-100 z-20"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all opacity-100 md:opacity-0 md:group-hover/viewer:opacity-100 z-20"
                 >
                   <ChevronLeft className="w-6 h-6" />
                 </button>
                 <button 
                   onClick={(e) => { e.stopPropagation(); goToNextImage(); }}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all opacity-0 group-hover/viewer:opacity-100 z-20"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all opacity-100 md:opacity-0 md:group-hover/viewer:opacity-100 z-20"
                 >
                   <ChevronRight className="w-6 h-6" />
                 </button>
 
                 {/* Slider Toggle */}
-                {selectedImage.resultPreview && (
+                {(selectedImage.resultPreview || selectedImage.result) && selectedImage.preview && (
                   <button 
                     onClick={() => setShowSlider(!showSlider)}
                     className={`
@@ -1903,7 +2065,7 @@ export default function REBEPage() {
                 </button>
 
                 {/* Bottom Thumbnail Strip */}
-                <div className="absolute bottom-4 left-4 right-4 flex justify-center pointer-events-none">
+                <div className="absolute bottom-4 left-4 right-4 hidden md:flex justify-center pointer-events-none">
                   <div className="bg-black/50 backdrop-blur-md p-1.5 rounded-2xl flex gap-1.5 overflow-x-auto max-w-full no-scrollbar pointer-events-auto border border-white/10">
                     {filteredImages.map((img) => (
                       <button
@@ -1914,18 +2076,26 @@ export default function REBEPage() {
                           ${selectedImage.id === img.id ? 'border-accent scale-110 shadow-lg' : 'border-transparent opacity-50 hover:opacity-80'}
                         `}
                       >
-                        <img 
-                          src={img.resultPreview || img.preview} 
-                          className="w-full h-full object-cover"
-                          alt="Thumb"
-                        />
+                        {img.mediaType === 'video' && img.resultPreview ? (
+                          <video 
+                            src={img.resultPreview} 
+                            className="w-full h-full object-cover"
+                            autoPlay loop muted playsInline
+                          />
+                        ) : (
+                          <img 
+                            src={img.resultPreview || img.preview} 
+                            className="w-full h-full object-cover"
+                            alt="Thumb"
+                          />
+                        )}
                       </button>
                     ))}
                   </div>
                 </div>
               </div>
               
-              <div className="w-full md:w-96 p-8 flex flex-col gap-6 text-white border-l border-white/10 overflow-y-auto">
+              <div className="w-full md:w-96 p-5 sm:p-8 flex-1 md:flex-none flex flex-col gap-6 text-white border-t md:border-t-0 md:border-l border-white/10 overflow-y-auto">
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="font-display font-bold text-xl">Photo Details</h3>
@@ -2033,11 +2203,17 @@ export default function REBEPage() {
 
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Refine Enhancement</p>
+                      <div className="flex flex-col gap-0.5">
+                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Refine Enhancement</p>
+                        <p className="text-[8px] text-gray-600 font-medium uppercase tracking-wider">
+                          {refineSource === 'original' ? "Source: Original Photo" : "Source: Last Result"}
+                        </p>
+                      </div>
                       <div className="flex items-center bg-black/20 rounded-lg p-0.5 border border-white/5">
                         <button 
                           onClick={() => setRefineSource('original')}
                           className={`px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md transition-all ${refineSource === 'original' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
+                          title="Apply prompt to the original uploaded file"
                         >
                           Original
                         </button>
@@ -2045,6 +2221,7 @@ export default function REBEPage() {
                           onClick={() => setRefineSource('result')}
                           disabled={!selectedImage.resultPreview}
                           className={`px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md transition-all ${refineSource === 'result' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300 disabled:opacity-30'}`}
+                          title={selectedImage.resultPreview ? "Iterate on the current enhanced version" : "Process an image first to refine the result"}
                         >
                           Result
                         </button>
@@ -2053,9 +2230,14 @@ export default function REBEPage() {
                     <textarea 
                       value={reprocessPrompt}
                       onChange={(e) => setReprocessPrompt(e.target.value)}
-                      className="w-full h-24 bg-transparent border-0 outline-none text-xs text-gray-300 resize-none leading-relaxed"
+                      className="w-full h-24 bg-transparent border-0 outline-none text-xs text-gray-300 resize-none leading-relaxed placeholder:text-gray-700"
                       placeholder={refineSource === 'original' ? "Prompt for new version from original source..." : "Iterate on the current enhanced result..."}
                     />
+                    <div className="text-[8px] text-gray-500 mb-2 px-1 italic">
+                      {refineSource === 'original' 
+                        ? "The AI will see the original photo and your new prompt." 
+                        : "The AI will see the last enhanced result and modify it further."}
+                    </div>
                     <div className="flex gap-2 mt-2">
                       <button 
                         onClick={() => reprocessSingle(false)}

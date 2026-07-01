@@ -19,6 +19,7 @@ export interface MemoryItem {
   usedAnalysis?: boolean;
   finalPrompt?: string;
   systemInstruction?: string;
+  mediaType?: 'image' | 'video';
 }
 
 export interface FavoritePrompt {

@@ -1,144 +1,107 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
-const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-
-if (!apiKey) {
-  console.warn("NEXT_PUBLIC_GEMINI_API_KEY is not set. AI features will be disabled.");
-}
+const apiKey = typeof window === 'undefined' ? process.env.GEMINI_API_KEY : null;
 
 export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const MODELS = {
-  IMAGE_GEN_BASIC: "gemini-2.5-flash-image",
-  IMAGE_GEN_HQ: "gemini-3.1-flash-image-preview",
+  IMAGE_GEN_BASIC: "gemini-3.1-flash-lite-image",
+  IMAGE_GEN_HQ: "gemini-3.1-flash-image",
   IMAGE_GEN_PRO: "gemini-3-pro-image",
-  TEXT: "gemini-3-flash-preview",
-  LIVE: "gemini-3.1-flash-live-preview",
+  TEXT: "gemini-3.1-flash-lite",
+  LIVE: "gemini-3.1-flash-live",
+  VIDEO: "omni-flash-preview"
 };
 
-export type ImageResolution = "512px" | "1K" | "2K" | "4K";
-export type ImageAspectRatio = "1:1" | "2:1" | "2:3" | "3:2" | "3:4" | "4:3" | "9:16" | "16:9" | "21:9";
+export type ImageResolution = "1K" | "2K" | "4K";
+export type ImageAspectRatio = "auto" | "1:1" | "2:1" | "2:3" | "3:2" | "3:4" | "4:3" | "9:16" | "16:9" | "21:9";
 export type ImageModel = "nano-2";
 export type ProcessingTier = "standard" | "flex" | "batch";
+export type OperationMode = 'edit' | 'create';
+export type MediaType = 'image' | 'video';
 
 export async function beautifyImage(
   base64Image: string, 
   prompt: string, 
   resolution: ImageResolution = "2K",
   modelType: ImageModel = "nano-2",
-  aspectRatio: ImageAspectRatio = "3:2",
+  aspectRatio: ImageAspectRatio = "auto",
   systemInstruction?: string,
-  tier: ProcessingTier = "standard",
+  tier: ProcessingTier = "flex",
+  opMode: OperationMode = 'edit',
+  mediaType: MediaType = 'image',
   retries = 3
 ) {
-  if (!ai) throw new Error("AI not initialized");
+  // If we are in the browser, call the API route
+  if (typeof window !== 'undefined') {
+    const mimeType = base64Image.match(/data:([^;]+);base64,/)?.[1] || "image/jpeg";
+    const base64Data = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image;
 
-  // Locked strictly to gemini-3.1-flash-image-preview
-  const model = MODELS.IMAGE_GEN_HQ;
-  const isHqModel = true;
-
-  // Extract mime type from data URL
-  const mimeType = base64Image.match(/data:([^;]+);base64,/)?.[1] || "image/jpeg";
-  const base64Data = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image;
-
-  // Prepare parts
-  const parts: any[] = [];
-  
-  parts.push({ text: "TARGET IMAGE TO ENHANCE:" });
-  parts.push({
-    inlineData: {
-      data: base64Data,
-      mimeType: mimeType,
-    },
-  });
-
-const instruction = systemInstruction || 
-  "Act as a professional photo editor and 3D design specialist with a fine-art background. Correct sharpness, focus, and lens distortion and localized neutral white balance for all sources and remove color casts. Reduce high-ISO noise and enhanced micro-contrast and detail.";
-
-  parts.push({ text: `\nINSTRUCTIONS: ${instruction}\n\nUSER PROMPT: ${prompt}` });
-
-  let lastError: any;
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: { parts: parts },
-        config: {
-          imageConfig: isHqModel ? {
-            imageSize: resolution,
-            aspectRatio: aspectRatio,
-          } : undefined
-        }
-      });
-
-      if (!response.candidates?.[0]?.content?.parts) {
-        const finishReason = response.candidates?.[0]?.finishReason;
-        throw new Error(`No valid response parts returned from AI. Reason: ${finishReason || 'Unknown'}`);
-      }
-
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-          return `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-        }
-      }
-      
-      throw new Error("No image returned from AI");
-    } catch (error: any) {
-      lastError = error;
-      const message = error.message || String(error);
-      
-      // If it's a 503 or 429, wait and retry
-      const isQuotaExceeded = message.includes('429') || message.toLowerCase().includes('quota');
-      const isServiceUnavailable = message.includes('503') || message.toLowerCase().includes('overloaded');
-      const isDeadlineExpired = message.toLowerCase().includes('deadline expired');
-      
-      if ((isQuotaExceeded || isServiceUnavailable || isDeadlineExpired) && i < retries - 1) {
-        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-        console.warn(`Retry ${i + 1}/${retries} after ${delay}ms due to: ${message}`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-
-      // If we're here, we're not retrying or we've run out of retries
-      if (isQuotaExceeded) {
-        throw new Error("AI Quota Exceeded: You've reached the rate limit for this model. If you are processing a batch, try reducing the 'Concurrency' in Settings to 1 or 2 to avoid firing too many requests at once.");
-      }
-      if (isServiceUnavailable) {
-        throw new Error("AI Service Overloaded: The AI model is currently busy. Retrying might help, or try again in a few minutes.");
-      }
-      
-      throw error;
+    // Determine model based on mediaType and tier
+    let modelName = MODELS.IMAGE_GEN_HQ;
+    if (mediaType === 'video') {
+      modelName = MODELS.VIDEO;
+    } else if (tier === 'batch' || resolution === '1K') {
+      modelName = MODELS.IMAGE_GEN_BASIC;
     }
+
+    const res = await fetch('/api/beautify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        base64Data,
+        mimeType,
+        prompt,
+        resolution,
+        model: modelName,
+        aspectRatio,
+        systemInstruction,
+        tier,
+        opMode,
+        mediaType
+      })
+    });
+
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || `HTTP error! status: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.base64;
   }
 
-  throw lastError;
+  // Fallback for server-side if needed (though API routes are the standard)
+  if (!ai) throw new Error("AI not initialized on server");
+  // ... (SDK logic if needed, but the API route is already handling it)
+  throw new Error("SDK calls should be proxied through API routes context");
 }
 
 export async function analyzeImage(base64Image: string) {
-  if (!ai) throw new Error("AI not initialized");
+  if (typeof window !== 'undefined') {
+    const mimeType = base64Image.match(/data:([^;]+);base64,/)?.[1] || "image/jpeg";
+    const base64Data = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image;
 
-  const mimeType = base64Image.match(/data:([^;]+);base64,/)?.[1] || "image/jpeg";
-  const base64Data = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image;
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        base64Data,
+        mimeType,
+        model: MODELS.TEXT
+      })
+    });
 
-  const response = await ai.models.generateContent({
-    model: MODELS.TEXT,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: mimeType,
-            },
-          },
-          {
-            text: "Analyze and Identify weaknesses or flaws. provide 3-5 post-production solutions to be passed as editor instruction",
-          },
-        ],
-      },
-    ],
-  });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || `HTTP error! status: ${res.status}`);
+    }
 
-  return response.text || "Could not analyze image.";
+    const data = await res.json();
+    return data.text;
+  }
+  
+  if (!ai) throw new Error("AI not initialized on server");
+  throw new Error("SDK calls should be proxied through API routes context");
 }
+
