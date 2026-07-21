@@ -1,16 +1,22 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 const apiKey = typeof window === 'undefined' ? process.env.GEMINI_API_KEY : null;
 
-export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+export const ai = apiKey ? new GoogleGenAI({ 
+  apiKey,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+}) : null;
 
 export const MODELS = {
   IMAGE_GEN_BASIC: "gemini-3.1-flash-lite-image",
   IMAGE_GEN_HQ: "gemini-3.1-flash-image",
-  IMAGE_GEN_PRO: "gemini-3-pro-image",
-  TEXT: "gemini-3.1-flash-lite",
-  LIVE: "gemini-3.1-flash-live",
-  VIDEO: "omni-flash-preview"
+  TEXT: "gemini-3.6-flash",
+  LIVE: "gemini-3.1-flash-live-preview",
+  VIDEO: "gemini-omni-flash-preview"
 };
 
 export type ImageResolution = "1K" | "2K" | "4K";

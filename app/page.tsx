@@ -1,2485 +1,1071 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Upload, 
   Sparkles, 
-  History, 
-  Download, 
-  Trash2, 
   Image as ImageIcon, 
+  Trash2, 
+  Heart, 
+  History, 
+  ChevronRight, 
   CheckCircle2, 
-  Loader2,
-  ChevronRight,
-  X,
-  Layers,
-  Sun,
-  Palette,
-  Settings,
-  Star,
-  Save,
-  Terminal,
-  Info,
-  Edit3,
-  ChevronLeft,
-  Search,
-  Maximize2,
-  Clock,
+  AlertCircle, 
+  RotateCcw, 
+  Download, 
+  MapPin, 
+  Sliders, 
+  LogOut, 
+  LogIn, 
+  User as UserIcon, 
+  HelpCircle,
   Folder,
-  MapPin,
+  Tag,
+  Loader2,
   RefreshCw,
-  MessageSquare
+  Maximize2
 } from 'lucide-react';
-import { beautifyImage, analyzeImage, ImageResolution, ImageModel, ProcessingTier, OperationMode, MediaType } from '@/lib/gemini';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   saveToMemory, 
   getMemory, 
-  MemoryItem, 
-  getFullMemoryItem,
-  clearMemory, 
-  subscribeToMemory, 
   subscribeToLocalMemory, 
-  syncLocalToFirestore,
-  FavoritePrompt,
-  saveFavoritePrompt,
-  getFavoritePrompts,
-  deleteFavoritePrompt,
-  subscribeToFavorites,
-  saveSystemInstruction,
-  getSystemInstruction,
-  Batch,
-  saveBatch,
-  subscribeToBatches
+  getFullMemoryItem, 
+  saveBatch, 
+  getBatches, 
+  subscribeToBatches, 
+  saveFavoritePrompt, 
+  subscribeToFavorites, 
+  deleteFavoritePrompt, 
+  MemoryItem, 
+  FavoritePrompt, 
+  Batch 
 } from '@/lib/memory';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User, GoogleAuthProvider } from '@/firebase';
-import { setDriveToken, getDriveViewUrl, getDriveToken, getFolderId } from '@/lib/drive';
-import JSZip from 'jszip';
-import { saveAs } from 'file-saver';
-import * as piexif from 'piexifjs';
-import ReactMarkdown from 'react-markdown';
-
+import { 
+  beautifyImage, 
+  analyzeImage, 
+  ImageResolution, 
+  ImageAspectRatio, 
+  OperationMode, 
+  MediaType 
+} from '@/lib/gemini';
+import { auth, signInWithPopup, signOut, googleProvider, onAuthStateChanged, User } from '@/firebase';
 import { BeforeAfterSlider } from '@/components/before-after-slider';
 import Chatbot from '@/components/chatbot';
 
-interface ImageFile {
-  id: string;
-  file: File;
-  preview: string;
-  status: 'idle' | 'processing' | 'completed' | 'error';
-  result?: string;
-  resultPreview?: string; // Blob URL for performance
-  error?: string;
-  isFavorite?: boolean;
-  analysis?: string;
-  isAnalyzing?: boolean;
-  usedAnalysis?: boolean;
-  finalPrompt?: string;
-  memoryId?: string; // Link to the enhancement record
-  mediaType?: MediaType;
-}
-
-// Helper to convert data URL to Blob URL
-const dataUrlToBlobUrl = async (dataUrl: string) => {
-  try {
-    const res = await fetch(dataUrl);
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
-  } catch (e) {
-    console.error("Blob conversion failed:", e);
-    return dataUrl;
-  }
-};
-
-export default function REBEPage() {
-  const [images, setImages] = useState<ImageFile[]>([]);
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-  const [prompt, setPrompt] = useState('High noon, diffused sunlight conversion with corrected verticals and improved sharpness, color and color balance.');
-  const [resolution, setResolution] = useState<ImageResolution>('2K');
-  const [aspectRatio, setAspectRatio] = useState<any>('auto');
-  const model: ImageModel = 'nano-2';
-  const [suffix, setSuffix] = useState('_nano');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [memory, setMemory] = useState<MemoryItem[]>([]);
-  const [showMemory, setShowMemory] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<ImageFile | null>(null);
-  const [reprocessPrompt, setReprocessPrompt] = useState('');
-  const [refineSource, setRefineSource] = useState<'original' | 'result'>('original');
+export default function Page() {
+  // State for Authentication
   const [user, setUser] = useState<User | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
-  const [concurrencyLimit, setConcurrencyLimit] = useState(2);
-  const [isBatchMode, setIsBatchMode] = useState(false);
-  const [tier, setTier] = useState<ProcessingTier>('flex');
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Core Data States
+  const [uploadedFiles, setUploadedFiles] = useState<{ id: string; file: File; base64: string; name: string; size: string }[]>([]);
+  const [queue, setQueue] = useState<MemoryItem[]>([]);
+  const [selectedQueueItem, setSelectedQueueItem] = useState<MemoryItem | null>(null);
+  const [selectedQueueFullItem, setSelectedQueueFullItem] = useState<MemoryItem | null>(null);
+
+  // Property Metadata
+  const [batchTitle, setBatchTitle] = useState('Property Launch Batch');
+  const [propertyAddress, setPropertyAddress] = useState('');
+  const [propertyTags, setPropertyTags] = useState<string[]>([]);
+  const [newTagInput, setNewTagInput] = useState('');
+
+  // AI Configuration States
+  const [enhancementPrompt, setEnhancementPrompt] = useState('Enhance lighting, add blue sky, make interiors bright and modern with photorealistic luxury staging');
+  const [systemInstruction, setSystemInstruction] = useState('Act as an elite architectural and real estate photo editor. Enhance lighting, correct perspectives, perform sky replacements, and perform virtual staging with high visual harmony.');
+  const [resolution, setResolution] = useState<ImageResolution>('2K');
+  const [aspectRatio, setAspectRatio] = useState<ImageAspectRatio>('auto');
   const [opMode, setOpMode] = useState<OperationMode>('edit');
   const [mediaType, setMediaType] = useState<MediaType>('image');
-  const [systemInstruction, setSystemInstruction] = useState("You are an expert photography retoucher");
-  const [favorites, setFavorites] = useState<FavoritePrompt[]>([]);
-  const [showFavorites, setShowFavorites] = useState(false);
-  const [showRecentPrompts, setShowRecentPrompts] = useState(false);
-  const [processedCount, setProcessedCount] = useState(0);
-  const [totalToProcess, setTotalToProcess] = useState(0);
-  const [galleryFilter, setGalleryFilter] = useState<'all' | 'completed' | 'processing' | 'error'>('all');
-  const [autoAnalyzeOnUpload, setAutoAnalyzeOnUpload] = useState(false);
-  const [showSettingsDrawer, setShowSettingsDrawer] = useState(false);
-  const [showPromptPreview, setShowPromptPreview] = useState(false);
-  const [showSlider, setShowSlider] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<string | null>(null);
+
+  // UI Interactive States
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [networkLog, setNetworkLog] = useState<{ id: string; type: string; status: 'pending' | 'success' | 'error'; timestamp: number; message: string }[]>([]);
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [propertyAddress, setPropertyAddress] = useState('');
-  const [historyTab, setHistoryTab] = useState<'edits' | 'batches'>('batches');
-  const [showAddressPrompt, setShowAddressPrompt] = useState(false);
-  const [showNamingFavorite, setShowNamingFavorite] = useState(false);
-  const [namingFavoriteType, setNamingFavoriteType] = useState<'recent' | 'manual'>('recent');
-  const [favoriteName, setFavoriteName] = useState('');
-  const [pendingFavoritePrompt, setPendingFavoritePrompt] = useState('');
-  const [pendingFavoriteSystem, setPendingFavoriteSystem] = useState('');
-  const [pendingImages, setPendingImages] = useState<ImageFile[]>([]);
-  const importInputRef = React.useRef<HTMLInputElement>(null);
-  const imagesRef = React.useRef(images);
-  
-  React.useEffect(() => {
-    imagesRef.current = images;
-  }, [images]);
+  const [activeAnalysis, setActiveAnalysis] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showSaveFavModal, setShowSaveFavModal] = useState(false);
+  const [newFavName, setNewFavName] = useState('');
 
-  const addNetworkLog = useCallback((type: string, message: string, status: 'pending' | 'success' | 'error' = 'pending') => {
-    const id = crypto.randomUUID();
-    setNetworkLog(prev => [{ id, type, status, message, timestamp: Date.now() }, ...prev].slice(0, 50));
-    return id;
-  }, []);
+  // History & Favorites Lists
+  const [batchesHistory, setBatchesHistory] = useState<Batch[]>([]);
+  const [favoritePrompts, setFavoritePrompts] = useState<FavoritePrompt[]>([]);
 
-  const updateNetworkLog = useCallback((id: string, status: 'success' | 'error', message?: string) => {
-    setNetworkLog(prev => prev.map(log => log.id === id ? { ...log, status, message: message || log.message } : log));
-  }, []);
+  // Refs
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const progressIntervalRef = useRef<any>(null);
 
-
-
-  const cycleResolution = () => {
-    const resMap: Record<ImageResolution, ImageResolution> = { '512px': '1K', '1K': '2K', '2K': '4K', '4K': '512px' };
-    setResolution(resMap[resolution] || '2K');
-  };
-
-  const fileToBase64 = useCallback((file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-    });
-  }, []);
-
+  // Listen to Auth State
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setIsAuthLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
+  // Listen to Local Memory Updates
   useEffect(() => {
-    getSystemInstruction().then(inst => {
-      if (inst) setSystemInstruction(inst);
+    return subscribeToLocalMemory((items) => {
+      // Refresh the active queue items to reflect status updates
+      setQueue(items);
     });
+  }, []);
 
-    const unsubscribe = subscribeToFavorites((items) => {
-      setFavorites(items);
-    }, (e) => {
-      if (e.message.includes('isQuotaExceeded":true')) {
-        setIsQuotaExceeded(true);
-      }
+  // Listen to Favorite Prompts
+  useEffect(() => {
+    return subscribeToFavorites((favs) => {
+      setFavoritePrompts(favs);
     });
-    return () => unsubscribe();
+  }, []);
+
+  // Listen to Batches history based on Auth
+  useEffect(() => {
+    return subscribeToBatches(user ? user.uid : null, (batches) => {
+      setBatchesHistory(batches);
+    });
   }, [user]);
 
+  // Handle selected item loading
   useEffect(() => {
-    if (user) {
-      // Sync local memory to Firestore when user logs in
-      const syncId = addNetworkLog('Database Sync', 'Checking for unsynced local records...');
-      syncLocalToFirestore(user.uid)
-        .then(() => updateNetworkLog(syncId, 'success', 'Local records synced to Cloud.'))
-        .catch(e => {
-          updateNetworkLog(syncId, 'error', `Sync failed: ${e.message}`);
-          if (e.message.includes('isQuotaExceeded":true')) {
-            setIsQuotaExceeded(true);
-          }
-        });
-      
-      const unsubscribeBatches = subscribeToBatches(user.uid, (items) => {
-        setBatches(items);
+    if (selectedQueueItem) {
+      getFullMemoryItem(selectedQueueItem.id).then(fullItem => {
+        setSelectedQueueFullItem(fullItem);
+      }).catch(err => {
+        console.error("Error fetching full item details:", err);
+        setSelectedQueueFullItem(selectedQueueItem);
       });
-
-      const unsubscribe = subscribeToMemory(user.uid, (items) => {
-        setMemory(items);
-      }, (e) => {
-        if (e.message.includes('isQuotaExceeded":true')) {
-          setIsQuotaExceeded(true);
-        }
-      });
-      return () => {
-        unsubscribe();
-        unsubscribeBatches();
-      };
     } else {
-      // Fallback to local memory if not logged in
-      const unsubscribeBatches = subscribeToBatches(null, (items) => {
-        setBatches(items);
-      });
-      const unsubscribe = subscribeToLocalMemory((items) => {
-        setMemory(items);
-      });
-      
-      // Initial load
-      getMemory().then(setMemory);
-      
-      return () => {
-        unsubscribe();
-        unsubscribeBatches();
-      };
+      setSelectedQueueFullItem(null);
     }
-  }, [user, addNetworkLog, updateNetworkLog]);
+  }, [selectedQueueItem, queue]);
 
-  const [isDriveLinked, setIsDriveLinked] = useState(false);
-
-  useEffect(() => {
-    // Check initial state
-    setIsDriveLinked(!!getDriveToken());
-  }, []);
-
-  const handleLogin = async () => {
+  // Auth Functions
+  const handleSignIn = async () => {
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setDriveToken(credential.accessToken);
-        setIsDriveLinked(true);
-      }
+      await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      console.error("Login failed:", error);
+      console.error("Sign in failed:", error);
     }
   };
 
-  const handleLogout = async () => {
+  const handleSignOut = async () => {
     try {
       await signOut(auth);
     } catch (error) {
-      console.error("Logout failed:", error);
+      console.error("Sign out failed:", error);
     }
   };
 
-  const openImageDetail = useCallback((img: ImageFile) => {
-    setSelectedImage(img);
-    setReprocessPrompt(img.finalPrompt || prompt);
-    setShowSlider(false);
-    setAnalysisResult(img.analysis || null);
-    setIsAnalyzing(!!img.isAnalyzing);
-    setRefineSource('original');
-  }, [prompt]);
-
-  const filteredImages = images.filter(img => {
-    if (galleryFilter === 'all') return true;
-    return img.status === galleryFilter;
-  });
-
-  const goToNextImage = useCallback(() => {
-    if (!selectedImage) return;
-    const currentIndex = filteredImages.findIndex(img => img.id === selectedImage.id);
-    if (currentIndex === -1) return;
-    const nextIndex = (currentIndex + 1) % filteredImages.length;
-    openImageDetail(filteredImages[nextIndex]);
-  }, [selectedImage, filteredImages, openImageDetail]);
-
-  const goToPreviousImage = useCallback(() => {
-    if (!selectedImage) return;
-    const currentIndex = filteredImages.findIndex(img => img.id === selectedImage.id);
-    if (currentIndex === -1) return;
-    const prevIndex = (currentIndex - 1 + filteredImages.length) % filteredImages.length;
-    openImageDetail(filteredImages[prevIndex]);
-  }, [selectedImage, filteredImages, openImageDetail]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!selectedImage) return;
-      if (e.key === 'ArrowRight') goToNextImage();
-      if (e.key === 'ArrowLeft') goToPreviousImage();
-      if (e.key === 'Escape') setSelectedImage(null);
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedImage, goToNextImage, goToPreviousImage]);
-
-  const handleAnalyze = useCallback(async (imgId?: string) => {
-    const targetId = imgId || selectedImage?.id;
-    if (!targetId) return;
-    
-    setImages(prev => prev.map(img => img.id === targetId ? { ...img, isAnalyzing: true } : img));
-    if (selectedImage?.id === targetId) {
-      setIsAnalyzing(true);
+  // File conversion & management
+  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFiles(e.dataTransfer.files);
     }
-
-    try {
-      const img = images.find(i => i.id === targetId) || pendingImages.find(i => i.id === targetId);
-      if (!img) return;
-
-      const base64 = await fileToBase64(img.file);
-      const result = await analyzeImage(base64);
-      
-      setImages(prev => prev.map(i => i.id === targetId ? { ...i, analysis: result, isAnalyzing: false } : i));
-      if (selectedImage?.id === targetId) {
-        setAnalysisResult(result);
-      }
-    } catch (error) {
-      console.error("Analysis failed:", error);
-      setImages(prev => prev.map(i => i.id === targetId ? { ...i, isAnalyzing: false } : i));
-    } finally {
-      if (selectedImage?.id === targetId) {
-        setIsAnalyzing(false);
-      }
-    }
-  }, [selectedImage, images, pendingImages, fileToBase64]);
-
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    const newImages = acceptedFiles.map(file => ({
-      id: crypto.randomUUID(),
-      file,
-      preview: URL.createObjectURL(file),
-      status: 'idle' as const,
-    }));
-    
-    if (images.length === 0) {
-      setPendingImages(newImages);
-      setShowAddressPrompt(true);
-    } else {
-      setImages(prev => [...prev, ...newImages]);
-    }
-
-    if (autoAnalyzeOnUpload) {
-      newImages.forEach(img => handleAnalyze(img.id));
-    }
-  }, [images.length, autoAnalyzeOnUpload, handleAnalyze]);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: { 'image/*': [] },
-  });
-
-  const removeImage = (id: string) => {
-    const imgToRemove = images.find(img => img.id === id);
-    if (imgToRemove?.resultPreview) {
-      URL.revokeObjectURL(imgToRemove.resultPreview);
-    }
-    setImages(prev => prev.filter(img => img.id !== id));
-    if (selectedImage?.id === id) setSelectedImage(null);
   };
 
-  const generateFromScratch = useCallback(async () => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-
-    const newId = crypto.randomUUID();
-    const newImg: ImageFile = {
-      id: newId,
-      file: new File([], 'generated.jpg', { type: 'image/jpeg' }),
-      preview: '', // No original
-      status: 'processing',
-      finalPrompt: prompt,
-      mediaType
-    };
-
-    setImages(prev => [newImg, ...prev]);
-    setSelectedImage(newImg);
-
-    try {
-      const finalResult = await beautifyImage(
-        '', // No base64
-        prompt, 
-        resolution, 
-        model, 
-        aspectRatio, 
-        systemInstruction, 
-        tier,
-        opMode,
-        mediaType
-      );
-
-      const timestamp = Date.now();
-      const memId = crypto.randomUUID();
-      const updatedImg: ImageFile = {
-        ...newImg,
-        status: 'completed',
-        resultPreview: await dataUrlToBlobUrl(finalResult),
-        memoryId: memId
-      };
-
-      setImages(prev => prev.map(img => img.id === newId ? updatedImg : img));
-      setSelectedImage(updatedImg);
-
-      await saveToMemory({
-        id: memId,
-        prompt: prompt,
-        timestamp,
-        originalThumbnail: '', // None
-        originalImage: '',
-        editedThumbnail: finalResult, // Using final result as thumbnail for simplicity
-        editedImage: finalResult,
-        status: 'completed',
-        address: propertyAddress.trim() || undefined,
-        tags: ['generated']
-      });
-
-    } catch (error: any) {
-      console.error(error);
-      const failedImg: ImageFile = {
-        ...newImg,
-        status: 'error',
-        error: error.message || 'Generation failed'
-      };
-      setImages(prev => prev.map(img => img.id === newId ? failedImg : img));
-      setSelectedImage(failedImg);
-    } finally {
-      setIsProcessing(false);
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(e.target.files);
     }
-  }, [isProcessing, prompt, resolution, model, aspectRatio, systemInstruction, tier, opMode, propertyAddress]);
+  };
 
-  const processBatch = useCallback(async () => {
-    if (images.length === 0 || isProcessing) return;
-    setIsProcessing(true);
-    setProcessedCount(0);
-    
-    const imagesToProcess = images.filter(img => img.status !== 'completed');
-    if (imagesToProcess.length === 0) {
-      setIsProcessing(false);
+  const processFiles = (files: FileList) => {
+    Array.from(files).forEach(file => {
+      if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+        alert("Please upload images or videos only.");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        const newFileId = Math.random().toString(36).substr(2, 9);
+        const fileSizeStr = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+
+        setUploadedFiles(prev => [
+          ...prev, 
+          { 
+            id: newFileId, 
+            file, 
+            base64: base64String, 
+            name: file.name,
+            size: fileSizeStr
+          }
+        ]);
+
+        // Add to main memory pool as pending
+        const newMemoryItem: MemoryItem = {
+          id: newFileId,
+          timestamp: Date.now(),
+          prompt: enhancementPrompt,
+          status: 'pending',
+          originalImage: base64String,
+          mediaType: file.type.startsWith('video') ? 'video' : 'image',
+          address: propertyAddress,
+          tags: propertyTags,
+          systemInstruction
+        };
+
+        saveToMemory(newMemoryItem);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeUploadedFile = (id: string) => {
+    setUploadedFiles(prev => prev.filter(f => f.id !== id));
+    if (selectedQueueItem?.id === id) {
+      setSelectedQueueItem(null);
+    }
+  };
+
+  const clearUploadsQueue = () => {
+    setUploadedFiles([]);
+    setSelectedQueueItem(null);
+  };
+
+  // Metadata tags
+  const addTag = () => {
+    if (newTagInput.trim() && !propertyTags.includes(newTagInput.trim())) {
+      setPropertyTags(prev => [...prev, newTagInput.trim()]);
+      setNewTagInput('');
+    }
+  };
+
+  const removeTag = (indexToRemove: number) => {
+    setPropertyTags(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  // AI Analysis of single item
+  const handleAnalyzePhoto = async () => {
+    const itemToAnalyze = selectedQueueFullItem || (uploadedFiles.length > 0 ? uploadedFiles[0] : null);
+    if (!itemToAnalyze) {
+      alert("Please select or upload a photo to analyze first.");
       return;
     }
-    setTotalToProcess(imagesToProcess.length);
 
-    const processImage = async (img: ImageFile) => {
-      if (img.status === 'completed') return img;
+    setIsAnalyzing(true);
+    setActiveAnalysis(null);
 
-      const logId = addNetworkLog('Image Generation', `Processing ${img.file.name}...`);
-      
-      // Create a persistent memory entry immediately so it's not "lost" if the browser crashes
-      const memoryId = crypto.randomUUID();
-      const originalBase64 = await fileToBase64(img.file);
-      
-      await saveToMemory({
-        id: memoryId,
+    const base64 = 'base64' in itemToAnalyze ? itemToAnalyze.base64 : itemToAnalyze.originalImage;
+    if (!base64) {
+      alert("Could not load original photo data.");
+      setIsAnalyzing(false);
+      return;
+    }
+
+    try {
+      const resultText = await analyzeImage(base64);
+      setActiveAnalysis(resultText);
+
+      // Save analysis to active item if applicable
+      if (selectedQueueItem) {
+        const updatedItem: MemoryItem = {
+          ...selectedQueueItem,
+          analysis: resultText,
+          isAnalyzing: false
+        };
+        await saveToMemory(updatedItem);
+      }
+    } catch (err: any) {
+      console.error("Analysis failed:", err);
+      setActiveAnalysis(`Analysis failed: ${err.message || err}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Core Processing Loop
+  const handleProcessBatch = async () => {
+    if (uploadedFiles.length === 0) {
+      alert("Please upload at least one image or video to enhance.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setProcessingProgress(0);
+
+    const totalFiles = uploadedFiles.length;
+    let completedCount = 0;
+
+    // Create custom batch session
+    const batchId = Math.random().toString(36).substr(2, 9);
+    const imageIds = uploadedFiles.map(f => f.id);
+    const thumbnailsList: string[] = [];
+
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const currentFile = uploadedFiles[i];
+
+      // Set status in memory queue to active/processing
+      const queueItem: MemoryItem = {
+        id: currentFile.id,
         timestamp: Date.now(),
-        prompt,
-        systemInstruction, // Store system instruction
+        prompt: enhancementPrompt,
         status: 'pending',
-        originalImage: originalBase64,
-        settings: { prompt, resolution, model, aspectRatio }
-      });
-
-      const currentPrompt = prompt;
-      const hasAnalysis = currentPrompt.includes("### ANALYSIS RECOMMENDATIONS:");
-      setImages(prev => prev.map(i => i.id === img.id ? { 
-        ...i, 
-        status: 'processing',
-        usedAnalysis: hasAnalysis,
-        finalPrompt: currentPrompt
-      } : i));
+        originalImage: currentFile.base64,
+        mediaType: mediaType,
+        address: propertyAddress,
+        tags: propertyTags,
+        systemInstruction,
+        settings: { resolution, aspectRatio, opMode }
+      };
+      await saveToMemory(queueItem);
 
       try {
-        // Simulate batch delay if enabled
-        if (isBatchMode) {
-          await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
-        }
-
-        const result = await beautifyImage(
-          originalBase64, 
-          prompt, 
-          resolution, 
-          model, 
-          aspectRatio, 
-          systemInstruction, 
-          tier,
+        // Beautify/Enhance single image
+        const processedBase64 = await beautifyImage(
+          currentFile.base64,
+          enhancementPrompt,
+          resolution,
+          "nano-2",
+          aspectRatio,
+          systemInstruction,
+          "flex",
           opMode,
           mediaType
         );
-        
-        // Maintain EXIF
-        let finalResult = result;
-        try {
-          const exifObj = piexif.load(originalBase64);
-          const exifStr = piexif.dump(exifObj);
-          finalResult = piexif.insert(exifStr, result);
-        } catch (e) {
-          console.warn("Could not transfer EXIF data:", e);
-        }
 
-        const updatedImg: ImageFile = {
-          ...img,
+        // Update successful item in memory
+        const completedItem: MemoryItem = {
+          ...queueItem,
           status: 'completed',
-          resultPreview: await dataUrlToBlobUrl(finalResult),
-          memoryId,
-          mediaType
+          editedImage: processedBase64,
+          originalImage: currentFile.base64
         };
+        await saveToMemory(completedItem);
 
-        setProcessedCount(prev => prev + 1);
+        // Save thumbnail placeholder for the batch list
+        thumbnailsList.push(processedBase64);
 
-        // Update the memory entry to 'completed'
-        await saveToMemory({
-          id: memoryId,
-          timestamp: Date.now(),
-          prompt,
-          systemInstruction, // Store system instruction
-          status: 'completed',
-          originalImage: originalBase64,
-          editedImage: finalResult,
-          settings: { prompt, resolution, model, aspectRatio }
-        });
-
-        updateNetworkLog(logId, 'success', `Successfully processed ${img.file.name}`);
-        setImages(prev => prev.map(i => i.id === img.id ? updatedImg : i));
-        return updatedImg;
+        if (selectedQueueItem?.id === currentFile.id) {
+          setSelectedQueueItem(completedItem);
+        }
       } catch (error: any) {
-        console.error(error);
-        const errorMsg = error.message || 'Failed to process';
-        
-        // Update memory entry to 'error'
-        await saveToMemory({
-          id: memoryId,
-          timestamp: Date.now(),
-          prompt,
+        console.error(`Enhancement failed for ${currentFile.name}:`, error);
+        const errorItem: MemoryItem = {
+          ...queueItem,
           status: 'error',
-          error: errorMsg,
-          originalImage: originalBase64,
-          settings: { prompt, resolution, model }
-        });
-
-        updateNetworkLog(logId, 'error', `Failed ${img.file.name}: ${errorMsg}`);
-        setProcessedCount(prev => prev + 1);
-        
-        const errorImg: ImageFile = {
-          ...img,
-          status: 'error',
-          error: errorMsg
+          error: error.message || String(error)
         };
-        setImages(prev => prev.map(i => i.id === img.id ? errorImg : i));
-        return errorImg;
-      }
-    };
-
-    const successfullyProcessed: ImageFile[] = [];
-
-    // Process images with limited concurrency
-    const queue = [...imagesToProcess];
-    const workers = Array(Math.min(concurrencyLimit, queue.length)).fill(null).map(async (_, index) => {
-      // Stagger start slightly to avoid burst 429s
-      await new Promise(resolve => setTimeout(resolve, index * 800));
-      
-      while (queue.length > 0) {
-        const img = queue.shift()!;
-        const updatedImg = await processImage(img);
-        if (updatedImg?.status === 'completed') {
-          successfullyProcessed.push(updatedImg);
-        }
-      }
-    });
-    await Promise.all(workers);
-
-    // Create a batch entry for these results
-    const batchImages = successfullyProcessed;
-    if (batchImages.length > 0) {
-      const timestamp = Date.now();
-      const defaultTitle = `Batch - ${new Date(timestamp).toLocaleDateString()} ${new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-      
-      // Get actual base64 thumbnails from memory for persistence
-      const batchThumbnails: string[] = [];
-      const localMemory = await getMemory();
-      for (const img of batchImages.slice(0, 4)) {
-        const memoryMatch = localMemory.find(m => m.id === (img.memoryId || img.id));
-        if (memoryMatch?.editedThumbnail) {
-          batchThumbnails.push(memoryMatch.editedThumbnail);
-        } else if (img.resultPreview) {
-          // Fallback if not found in memory yet (unlikely)
-          batchThumbnails.push(img.resultPreview);
-        }
+        await saveToMemory(errorItem);
       }
 
-      await saveBatch({
-        id: crypto.randomUUID(),
-        timestamp,
-        imageIds: batchImages.map(img => img.memoryId || img.id),
-        thumbnails: batchThumbnails,
-        title: propertyAddress.trim() || defaultTitle,
-        address: propertyAddress.trim() || undefined,
-        prompt, // Store batch prompt
-        systemInstruction, // Store batch system instruction
-        tags: ['enhanced']
-      });
-      // Do not reset address if user might want to process more in the same batch session
-      // but we clear it if the whole batch is done and "successful"
-      if (batchImages.length === images.length) {
-        setPropertyAddress(''); 
-      }
+      completedCount++;
+      setProcessingProgress(Math.round((completedCount / totalFiles) * 100));
     }
+
+    // Save entire batch session
+    const newBatch: Batch = {
+      id: batchId,
+      timestamp: Date.now(),
+      title: batchTitle,
+      address: propertyAddress || undefined,
+      imageIds,
+      thumbnails: thumbnailsList,
+      tags: propertyTags,
+      prompt: enhancementPrompt,
+      systemInstruction
+    };
+    await saveBatch(newBatch);
 
     setIsProcessing(false);
-  }, [images, isProcessing, prompt, resolution, model, aspectRatio, fileToBase64, concurrencyLimit, systemInstruction, isBatchMode, propertyAddress, tier, addNetworkLog, updateNetworkLog]);
-
-  const reprocessSingle = useCallback(async (createNewVariation: boolean = false) => {
-    if (!selectedImage || selectedImage.status === 'processing') return;
-    
-    const currentPrompt = reprocessPrompt;
-    const hasAnalysis = currentPrompt.includes("### ANALYSIS RECOMMENDATIONS:");
-    const newId = crypto.randomUUID();
-    const targetId = createNewVariation ? newId : selectedImage.id;
-
-    if (createNewVariation) {
-      const newImg: ImageFile = {
-        ...selectedImage,
-        id: targetId,
-        status: 'processing',
-        usedAnalysis: hasAnalysis,
-        finalPrompt: currentPrompt,
-        resultPreview: undefined,
-        analysis: undefined,
-        memoryId: undefined
-      };
-      setImages(prev => [newImg, ...prev]);
-      setSelectedImage(newImg);
-    } else {
-      setImages(prev => prev.map(img => 
-        img.id === targetId ? { 
-          ...img, 
-          status: 'processing',
-          usedAnalysis: hasAnalysis,
-          finalPrompt: currentPrompt
-        } : img
-      ));
-    }
-
-    try {
-      let base64: string;
-      
-      if (refineSource === 'result' && selectedImage.memoryId) {
-        const fullItem = await getFullMemoryItem(selectedImage.memoryId);
-        if (fullItem?.editedImage) {
-          base64 = fullItem.editedImage;
-        } else {
-          // Fallback to original if result not found
-          base64 = await fileToBase64(selectedImage.file);
-        }
-      } else {
-        base64 = await fileToBase64(selectedImage.file);
-      }
-
-      const result = await beautifyImage(
-        base64, 
-        reprocessPrompt, 
-        resolution, 
-        model, 
-        aspectRatio, 
-        systemInstruction, 
-        tier,
-        opMode,
-        mediaType
-      );
-      
-      // Maintain EXIF
-      let finalResult = result;
-      try {
-        const exifObj = piexif.load(base64);
-        const exifStr = piexif.dump(exifObj);
-        finalResult = piexif.insert(exifStr, result);
-      } catch (e) {
-        console.warn("Could not transfer EXIF data:", e);
-      }
-
-      const memoryId = crypto.randomUUID();
-      const updatedImg: ImageFile = {
-        ...selectedImage,
-        id: targetId,
-        status: 'completed',
-        usedAnalysis: hasAnalysis,
-        finalPrompt: currentPrompt,
-        resultPreview: await dataUrlToBlobUrl(finalResult),
-        memoryId,
-        mediaType
-      };
-      
-      setImages(prev => prev.map(img => img.id === targetId ? updatedImg : img));
-      setSelectedImage(updatedImg);
-      
-      await saveToMemory({
-        id: memoryId,
-        timestamp: Date.now(),
-        prompt: reprocessPrompt,
-        systemInstruction, // Store system instruction
-        originalImage: base64,
-        editedImage: result,
-        settings: { prompt: reprocessPrompt, resolution, model }
-      });
-      
-    } catch (error) {
-      console.error(error);
-      setImages(prev => prev.map(img => 
-        img.id === targetId ? { ...img, status: 'error', error: 'Failed to re-process' } : img
-      ));
-    }
-  }, [selectedImage, reprocessPrompt, refineSource, resolution, model, aspectRatio, fileToBase64, systemInstruction, tier]);
-
-  const downloadAll = async () => {
-    const zip = new JSZip();
-    const completedImages = images.filter(img => img.status === 'completed' && img.resultPreview);
-    
-    for (const img of completedImages) {
-      if (!img.resultPreview) continue;
-      // Fetch blob directly from the object URL
-      const response = await fetch(img.resultPreview);
-      const blob = await response.blob();
-      
-      const originalName = img.file.name;
-      const dotIndex = originalName.lastIndexOf('.');
-      const nameWithoutExt = dotIndex !== -1 ? originalName.substring(0, dotIndex) : originalName;
-      const ext = dotIndex !== -1 ? originalName.substring(dotIndex) : '.jpg';
-      
-      zip.file(`${nameWithoutExt}${suffix}${ext}`, blob);
-    }
-    
-    const content = await zip.generateAsync({ type: 'blob' });
-    saveAs(content, 'processed_real_estate_photos.zip');
   };
 
-  const downloadBatch = async (batch: Batch) => {
-    const zip = new JSZip();
-    addNetworkLog('Batch Download', `Preparing ${batch.imageIds.length} images...`);
-    
-    let foundCount = 0;
-    for (const id of batch.imageIds) {
-      const fullItem = await getFullMemoryItem(id);
-      if (fullItem && fullItem.editedImage) {
-        const base64Data = fullItem.editedImage.split(',')[1];
-        zip.file(`enhanced_${id.slice(0, 8)}.jpg`, base64Data, { base64: true });
-        foundCount++;
-      }
-    }
-    
-    if (foundCount === 0) {
-      alert("No full-size images found for this batch in your local cache or cloud.");
-      return;
-    }
-
-    const content = await zip.generateAsync({ type: 'blob' });
-    saveAs(content, `${batch.title.replace(/[^\w]/g, '_')}_results.zip`);
-  };
-
+  // Preset management
   const handleSaveFavorite = async () => {
-    if (!favoriteName.trim()) return;
-    
-    await saveFavoritePrompt({
-      id: crypto.randomUUID(),
-      name: favoriteName.trim(),
-      prompt: pendingFavoritePrompt,
-      systemInstruction: pendingFavoriteSystem,
+    if (!newFavName.trim()) return;
+    const newFav: FavoritePrompt = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: newFavName,
+      prompt: enhancementPrompt,
+      systemInstruction,
       timestamp: Date.now()
-    });
-    
-    setShowNamingFavorite(false);
-    setFavoriteName('');
+    };
+    await saveFavoritePrompt(newFav);
+    setNewFavName('');
+    setShowSaveFavModal(false);
   };
 
-  if (!isMounted) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-white/50" />
-          <span className="text-[10px] uppercase tracking-widest text-white/50 font-bold">Initializing Cosmic Photo Engine...</span>
-        </div>
-      </div>
-    );
-  }
+  const handleApplyFavorite = (fav: FavoritePrompt) => {
+    setEnhancementPrompt(fav.prompt);
+    if (fav.systemInstruction) {
+      setSystemInstruction(fav.systemInstruction);
+    }
+  };
+
+  const handleDeleteFavorite = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (confirm("Are you sure you want to delete this preset?")) {
+      await deleteFavoritePrompt(id);
+    }
+  };
+
+  // Historic batch loading
+  const handleLoadBatch = async (batch: Batch) => {
+    setBatchTitle(batch.title);
+    setPropertyAddress(batch.address || '');
+    setPropertyTags(batch.tags || []);
+    setEnhancementPrompt(batch.prompt || '');
+    if (batch.systemInstruction) {
+      setSystemInstruction(batch.systemInstruction);
+    }
+
+    // Reconstruct uploadedFiles list
+    const restoredFiles: { id: string; file: File; base64: string; name: string; size: string }[] = [];
+    
+    for (let i = 0; i < batch.imageIds.length; i++) {
+      const imgId = batch.imageIds[i];
+      const fullItem = await getFullMemoryItem(imgId);
+      if (fullItem) {
+        // Create synthetic File
+        const byteString = atob((fullItem.originalImage || fullItem.originalThumbnail || '').split(',')[1] || '');
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let j = 0; j < byteString.length; j++) {
+          ia[j] = byteString.charCodeAt(j);
+        }
+        const blob = new Blob([ab], { type: fullItem.mediaType === 'video' ? 'video/mp4' : 'image/jpeg' });
+        const file = new File([blob], `restored_${imgId}.jpg`, { type: blob.type });
+
+        restoredFiles.push({
+          id: imgId,
+          file,
+          base64: fullItem.originalImage || fullItem.originalThumbnail || '',
+          name: `Image_${i + 1}.jpg`,
+          size: (file.size / (1024 * 1024)).toFixed(2) + ' MB'
+        });
+      }
+    }
+
+    setUploadedFiles(restoredFiles);
+    setShowHistoryModal(false);
+  };
+
+  // Download logic
+  const downloadProcessed = (item: MemoryItem) => {
+    const data = item.editedImage;
+    if (!data) return;
+    const link = document.createElement('a');
+    link.href = data;
+    link.download = `enhanced_${item.id}.${item.mediaType === 'video' ? 'mp4' : 'jpg'}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8F9FA]">
-      {/* Quota Warning Banner */}
-      {isQuotaExceeded && (
-        <div className="bg-amber-50 border-b border-amber-200 p-2 text-center">
-          <p className="text-[10px] text-amber-800 flex items-center justify-center gap-2">
-            <Info size={12} />
-            Firestore daily read quota exceeded. Cloud sync is paused until tomorrow, but local history still works.
-          </p>
-        </div>
-      )}
-
-      {/* Header */}
-      <header className="bg-black sticky top-0 z-40 px-6 py-4 flex flex-col gap-3 shadow-2xl">
-        <div className="flex items-center justify-between w-full">
+    <div id="main-container" className="min-h-screen bg-[#FBFBFB] text-[#1E293B] flex flex-col font-sans selection:bg-[#E2E8F0]">
+      {/* Upper Navigation & Account Status */}
+      <header id="app-header" className="border-b border-[#EDF2F7] bg-white sticky top-0 z-40 transition-shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex flex-col items-center">
-              <div className="flex items-baseline text-white">
-                <span className="font-sans font-black italic tracking-tighter text-3xl">BATCH</span>
-                <span className="font-sans font-light italic tracking-tight text-3xl">LAB</span>
-              </div>
-              <div className="text-white text-[9px] tracking-[0.6em] font-serif uppercase -mt-1 opacity-90 pl-1 w-full text-center">
-                PHOTO ENGINE
-              </div>
+            <div className="bg-[#1E293B] text-white p-2 rounded-lg flex items-center justify-center shadow-sm">
+              <Sparkles className="w-5 h-5 text-amber-400 animate-pulse" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight text-[#0F172A]">Batchlab</h1>
+              <p className="text-[10px] text-gray-400 font-medium tracking-wide uppercase">Photo Engine BW</p>
             </div>
           </div>
-          
-          <div className="flex items-center gap-2">
-            {!isAuthLoading && (
-              user ? (
-                <div className="flex items-center gap-3 mr-2 bg-white/5 px-2 py-1 rounded-xl border border-white/10 max-sm:mr-1">
-                  <div className="text-right hidden md:block">
-                    <p className="text-[10px] font-bold text-white leading-none">{user.displayName}</p>
-                    <button onClick={handleLogout} className="text-[9px] text-gray-400 hover:text-red-400 transition-colors">Sign Out</button>
-                  </div>
-                  <img src={user.photoURL || ''} alt="Profile" className="w-7 h-7 rounded-full border border-white/20" />
-                </div>
-              ) : (
-                <button 
-                  onClick={handleLogin}
-                  className="text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10 px-3 py-2 rounded-lg transition-all mr-2 border border-white/20"
-                >
-                  Sign In
-                </button>
-              )
-            )}
+
+          <div className="flex items-center gap-4">
+            {/* Presets Button */}
             <button 
-              onClick={() => setShowMemory(!showMemory)}
-              className="p-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all border border-white/10"
-              title="History"
+              id="presets-btn"
+              onClick={() => setShowSaveFavModal(true)} 
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#475569] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md transition-all active:scale-95"
             >
-              <History className="w-4 h-4" />
-              <span className="hidden lg:inline">History</span>
+              <Heart className="w-3.5 h-3.5" />
+              Save Preset
             </button>
+
+            {/* History Sessions Button */}
             <button 
-              onClick={() => setShowSettingsDrawer(!showSettingsDrawer)}
-              className="p-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all border border-white/10"
-              title="Settings"
+              id="history-btn"
+              onClick={() => setShowHistoryModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#475569] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md transition-all active:scale-95"
             >
-              <Settings className={`w-4 h-4 ${showSettingsDrawer ? 'animate-spin-slow' : ''}`} />
-              <span className="hidden lg:inline">Settings</span>
+              <History className="w-3.5 h-3.5" />
+              Sessions ({batchesHistory.length})
             </button>
+
+            {/* User Profile / Login */}
+            <div className="h-8 w-px bg-slate-200" />
             
-                {user && (
-                  <div className="hidden sm:flex items-center gap-2 px-3 py-2 bg-white/5 rounded-lg border border-white/10 opacity-30 cursor-not-allowed">
-                    <div className="w-1.5 h-1.5 rounded-full bg-gray-500" />
-                    <span className="text-[9px] font-bold text-white uppercase tracking-widest">
-                      Bucket
-                    </span>
+            {authLoading ? (
+              <Loader2 className="w-5 h-5 animate-spin text-[#475569]" />
+            ) : user ? (
+              <div className="flex items-center gap-3">
+                <div className="hidden md:flex flex-col items-end">
+                  <span className="text-xs font-semibold text-[#1E293B]">{user.displayName || 'Architect'}</span>
+                  <span className="text-[10px] text-gray-400 font-medium">Verified Professional</span>
+                </div>
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="User photo" className="w-8 h-8 rounded-full border border-slate-200 shadow-sm" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 text-slate-600">
+                    <UserIcon className="w-4 h-4" />
                   </div>
                 )}
-
-            {images.some(img => img.status === 'completed') && (
+                <button 
+                  id="signout-btn"
+                  onClick={handleSignOut} 
+                  title="Sign Out" 
+                  className="p-1.5 text-slate-400 hover:text-red-500 rounded-md hover:bg-red-50/50 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
               <button 
-                onClick={downloadAll}
-                className="px-3 py-2 flex items-center gap-2 text-xs font-black uppercase tracking-widest bg-accent hover:bg-accent-dark text-white rounded-lg shadow-lg shadow-accent/20 transition-all ml-1"
+                id="signin-btn"
+                onClick={handleSignIn} 
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#1E293B] hover:bg-[#334155] rounded-md transition-all active:scale-95 shadow-sm"
               >
-                <Download className="w-4 h-4" />
-                <span className="hidden sm:inline text-[10px]">Export</span>
+                <LogIn className="w-3.5 h-3.5" />
+                Sign In
               </button>
             )}
           </div>
         </div>
-
-        {/* Global Progress Bar */}
-        <AnimatePresence>
-          {isProcessing && totalToProcess > 0 && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="w-full pt-1 pb-2 border-t border-white/5"
-            >
-              <div className="flex items-center justify-between mb-1.5 px-1">
-                <div className="flex items-center gap-2">
-                  <Loader2 size={10} className="text-accent animate-spin" />
-                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/50">Processing Batch</span>
-                </div>
-                <span className="text-[9px] font-mono font-bold text-accent">{processedCount} / {totalToProcess}</span>
-              </div>
-              <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                <motion.div 
-                  className="h-full bg-accent shadow-[0_0_8px_#FF6B00]"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${(processedCount / totalToProcess) * 100}%` }}
-                />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left Panel: Controls */}
-        <div className="w-full lg:w-80 border-r border-border bg-white p-6 flex flex-col gap-6 overflow-y-auto">
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-xs font-bold uppercase tracking-widest text-text-muted">Enhancement Prompt</label>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => {
-                    setShowRecentPrompts(!showRecentPrompts);
-                    if (!showRecentPrompts) setShowFavorites(false);
-                  }}
-                  className={`p-1.5 rounded-md transition-all ${showRecentPrompts ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-400'}`}
-                  title="Recent Prompts"
-                >
-                  <Clock className="w-4 h-4" />
-                </button>
-                <button 
-                  onClick={() => {
-                    setShowFavorites(!showFavorites);
-                    if (!showFavorites) setShowRecentPrompts(false);
-                  }}
-                  className={`p-1.5 rounded-md transition-all ${showFavorites ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-400'}`}
-                  title="Favorite Prompts"
-                >
-                  <Star className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            
-            {/* Quick Settings Toolbar */}
-            <div className="flex flex-wrap items-center gap-1.5 mb-3">
-              <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-md border border-gray-200 shadow-inner">
-                <button
-                  onClick={() => setOpMode('edit')}
-                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
-                    opMode === 'edit' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                  title="Enhance existing media"
-                >
-                  <Edit3 size={10} />
-                  Edit
-                </button>
-                <button
-                  onClick={() => setOpMode('create')}
-                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
-                    opMode === 'create' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                  title="Generate from scratch"
-                >
-                  <Sparkles size={10} />
-                  Create
-                </button>
+      {/* Main Dashboard Space */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        
+        {/* Left Side: Upload, Prompts, Metadata, Presets */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          
+          {/* Section 1: Property Metadata Info */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-[#475569] mb-4 flex items-center gap-2">
+              <Folder className="w-4 h-4 text-slate-400" />
+              Batch Information
+            </h2>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Batch / Property Title</label>
+                <input 
+                  type="text" 
+                  value={batchTitle} 
+                  onChange={(e) => setBatchTitle(e.target.value)}
+                  className="w-full text-sm font-semibold border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-slate-400 outline-none transition-all"
+                  placeholder="e.g. 42 Luxury Oak Drive"
+                />
               </div>
 
-              <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-md border border-gray-200 shadow-inner">
-                <button
-                  onClick={() => setMediaType('image')}
-                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
-                    mediaType === 'image' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                  title="Image Mode"
-                >
-                  <ImageIcon size={10} />
-                  Image
-                </button>
-                <button
-                  onClick={() => setMediaType('video')}
-                  className={`px-2 py-1 text-[9px] font-bold uppercase tracking-widest rounded transition-all flex gap-1 items-center ${
-                    mediaType === 'video' ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                  title="Video Mode"
-                >
-                  <Sparkles size={10} className="text-purple-500" />
-                  Video
-                </button>
-              </div>
-
-              <button 
-                onClick={cycleResolution}
-                className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 py-1 rounded-md transition-colors"
-                title="Click to cycle Resolution"
-              >
-                <Maximize2 size={10} className="text-accent" />
-                {resolution}
-              </button>
-
-              <div className="relative group">
-                <select 
-                  value={aspectRatio}
-                  onChange={(e) => setAspectRatio(e.target.value)}
-                  className="appearance-none flex items-center pr-5 text-[9px] font-bold uppercase tracking-wider bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 py-1 rounded-md transition-colors outline-none cursor-pointer"
-                  title="Aspect Ratio"
-                >
-                  <option value="auto">AUTO</option>
-                  {['1:1', '2:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9'].map(r => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
-                <ChevronRight size={8} className="absolute right-1.5 top-1.5 text-gray-400 rotate-90 pointer-events-none" />
-              </div>
-
-              <div className="relative group">
-                <select 
-                  value={tier}
-                  onChange={(e) => {
-                    setTier(e.target.value as ProcessingTier);
-                    setIsBatchMode(e.target.value === 'batch');
-                  }}
-                  className="appearance-none flex items-center pr-5 text-[9px] font-bold uppercase tracking-wider bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 py-1 rounded-md transition-colors outline-none cursor-pointer"
-                  title="Processing Tier (Paygo)"
-                >
-                  <option value="standard">STD</option>
-                  <option value="flex">FLEX</option>
-                  <option value="batch">BATCH</option>
-                </select>
-                <ChevronRight size={8} className="absolute right-1.5 top-1.5 text-gray-400 rotate-90 pointer-events-none" />
-              </div>
-            </div>
-
-            <textarea 
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              className="w-full h-24 p-3 rounded-2xl bg-bg border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-all text-xs resize-none leading-relaxed"
-              placeholder="Describe how to beautify the photos..."
-            />
-            
-            <AnimatePresence>
-              {showRecentPrompts && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden mt-2 space-y-2"
-                >
-                  <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-blue-700">Recent Prompts</p>
-                    {(() => {
-                      const uniquePrompts = Array.from(new Set(memory.map(m => m.prompt))).slice(0, 10);
-                      if (uniquePrompts.length === 0) {
-                        return <p className="text-[10px] text-blue-600/60 italic">No recent prompts.</p>;
-                      }
-                      return (
-                        <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                          {uniquePrompts.map((p, idx) => (
-                            <div key={idx} className="flex items-center justify-between gap-2 group">
-                              <button 
-                                onClick={() => {
-                                  setPrompt(p);
-                                  setShowRecentPrompts(false);
-                                }}
-                                className="flex-1 text-left text-[10px] text-blue-800 hover:bg-blue-100 p-1.5 rounded transition-colors truncate"
-                                title={p}
-                              >
-                                {p}
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  if (navigator.clipboard) {
-                                    navigator.clipboard.writeText(p);
-                                  }
-                                }}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-blue-400 hover:text-blue-600 transition-all"
-                                title="Copy"
-                              >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setPendingFavoritePrompt(p);
-                                  setPendingFavoriteSystem(systemInstruction);
-                                  setFavoriteName(p.substring(0, 20) + '...');
-                                  setNamingFavoriteType('recent');
-                                  setShowNamingFavorite(true);
-                                }}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-blue-400 hover:text-amber-500 transition-all"
-                                title="Save as Favorite"
-                              >
-                                <Star size={10} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {showFavorites && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden mt-2 space-y-2"
-                >
-                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 space-y-2">
-                    <div className="flex items-center justify-between mb-2">
-                       <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Favorite Prompts</p>
-                       <button 
-                         onClick={() => {
-                           setPendingFavoritePrompt(prompt);
-                           setPendingFavoriteSystem(systemInstruction);
-                           setFavoriteName('');
-                           setNamingFavoriteType('manual');
-                           setShowNamingFavorite(true);
-                         }}
-                         className="text-[9px] font-black uppercase text-amber-600 bg-amber-100/50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-200 transition-all flex items-center gap-1"
-                       >
-                         <Save size={8} />
-                         Add Manual
-                       </button>
-                    </div>
-                    {favorites.length === 0 ? (
-                      <p className="text-[10px] text-amber-600/60 italic">No favorites yet.</p>
-                    ) : (
-                      <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                        {favorites.map(fav => (
-                          <div key={fav.id} className="flex items-center justify-between gap-2 group">
-                            <button 
-                              onClick={() => {
-                                setPrompt(fav.prompt);
-                                if (fav.systemInstruction) {
-                                  setSystemInstruction(fav.systemInstruction);
-                                  saveSystemInstruction(fav.systemInstruction);
-                                }
-                                setShowFavorites(false);
-                              }}
-                              className="flex-1 text-left text-[10px] text-amber-800 hover:bg-amber-100 p-1.5 rounded transition-colors truncate"
-                              title={fav.prompt}
-                            >
-                              {fav.name}
-                            </button>
-                            <button 
-                              onClick={() => deleteFavoritePrompt(fav.id)}
-                              className="opacity-0 group-hover:opacity-100 p-1 text-amber-400 hover:text-red-500 transition-all"
-                            >
-                              <Trash2 size={10} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            
-            {favorites.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {favorites.slice(0, 6).map(fav => (
-                  <button 
-                    key={fav.id}
-                    onClick={() => setPrompt(fav.prompt)}
-                    className="text-[10px] font-bold uppercase tracking-wider bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-md transition-colors truncate max-w-[140px]"
-                    title={fav.prompt}
-                  >
-                    {fav.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="flex-1 mt-4">
-            <div 
-              {...getRootProps()} 
-              className={`
-                border-2 border-dashed rounded-3xl p-6 flex flex-col items-center justify-center gap-3 transition-all cursor-pointer h-full min-h-[160px]
-                ${isDragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50 hover:bg-gray-50'}
-              `}
-            >
-              <input {...getInputProps()} />
-              <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
-                <Upload className="text-accent w-5 h-5" />
-              </div>
-              <div className="text-center">
-                <p className="font-bold text-xs">Drop photos here</p>
-                <p className="text-[10px] text-text-muted">or click to browse</p>
-              </div>
-            </div>
-          </section>
-
-          <div className="mt-4">
-            <button 
-              onClick={() => {
-                if (opMode !== 'edit' && images.length === 0) {
-                  generateFromScratch();
-                } else {
-                  processBatch();
-                }
-              }}
-              disabled={(opMode === 'edit' && images.length === 0) || isProcessing}
-              className={`
-                btn-primary w-full py-4 flex items-center justify-center gap-2 text-[11px] font-bold tracking-widest uppercase rounded-2xl
-                ${((opMode === 'edit' && images.length === 0) || isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}
-                ${isBatchMode ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20' : ''}
-              `}
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>{isBatchMode ? 'Submitting Batch...' : 'Processing...'}</span>
-                </>
-              ) : (
-                <>
-                  {isBatchMode ? <Layers className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                  <span>
-                    {opMode !== 'edit' && images.length === 0 
-                      ? 'Generate Image' 
-                      : (isBatchMode ? `Process ${images.length > 0 ? images.length : ''} in Batch` : `${opMode === 'edit' ? 'Beautify' : 'Generate'} ${images.length > 0 ? images.length : ''} Photo${images.length !== 1 ? 's' : ''}`)}
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Right Panel: Gallery */}
-        <div className="flex-1 bg-bg p-4 overflow-y-auto relative flex flex-col">
-          <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
-            <div className="flex items-center gap-4">
-              <h2 className="font-display font-black text-xl tracking-tighter uppercase">Gallery</h2>
-              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
-                {(['all', 'completed', 'processing', 'error'] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setGalleryFilter(f)}
-                    className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${
-                      galleryFilter === f 
-                        ? 'bg-black text-white shadow-md' 
-                        : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
-                    {f}
-                    {f === 'all' ? ` (${images.length})` : images.filter(img => img.status === f).length > 0 ? ` (${images.filter(img => img.status === f).length})` : ''}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-1">
-            {isBatchMode && isProcessing && (
-            <div className="absolute top-20 left-4 right-4 z-10">
-              <div className="bg-blue-600 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between animate-pulse">
-                <div className="flex items-center gap-3">
-                  <Layers className="w-5 h-5" />
-                  <div>
-                    <p className="text-xs font-bold">Batch Job in Progress</p>
-                    <p className="text-[10px] opacity-80">Processing at convenient moments for maximum discount...</p>
-                  </div>
-                </div>
-                <div className="text-xs font-mono">
-                  {images.filter(img => img.status === 'completed').length} / {images.length}
-                </div>
-              </div>
-            </div>
-          )}
-          {images.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-text-muted opacity-50 gap-4">
-              <div className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center">
-                <ImageIcon className="w-8 h-8" />
-              </div>
-              <p className="font-display uppercase tracking-widest text-sm">No photos uploaded yet</p>
-            </div>
-          ) : filteredImages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-text-muted opacity-50 gap-4 mt-20">
-              <Search className="w-10 h-10 text-gray-300" />
-              <p className="font-display uppercase tracking-widest text-sm">No {galleryFilter} photos</p>
-              <button 
-                onClick={() => setGalleryFilter('all')}
-                className="text-accent text-[10px] uppercase font-bold tracking-widest hover:underline"
-              >
-                Clear Filter
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-3">
-              <AnimatePresence mode="popLayout">
-                {filteredImages.map((img) => (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    key={img.id}
-                    className="card group relative"
-                  >
-                    <div className="aspect-[4/3] relative bg-gray-200 cursor-pointer overflow-hidden rounded-md">
-                      {img.mediaType === 'video' && img.resultPreview ? (
-                        <video 
-                          src={img.resultPreview}
-                          autoPlay
-                          loop
-                          muted
-                          playsInline
-                          className={`w-full h-full object-cover transition-all duration-500 ${img.status === 'processing' ? 'blur-sm grayscale' : ''}`}
-                          onClick={() => openImageDetail(img)}
-                        />
-                      ) : (
-                        <img 
-                          src={img.resultPreview || img.preview} 
-                          alt="Preview" 
-                          className={`w-full h-full object-cover transition-all duration-500 ${img.status === 'processing' ? 'blur-sm grayscale' : ''}`}
-                          onClick={() => openImageDetail(img)}
-                        />
-                      )}
-                      
-                      {img.status === 'processing' && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
-                          <Loader2 className="w-8 h-8 text-white animate-spin" />
-                        </div>
-                      )}
-
-                      {img.status === 'completed' && (
-                        <div className="absolute top-2 left-2 flex items-center gap-1">
-                          <div className="bg-green-500 text-white p-1 rounded-full shadow-lg pointer-events-none">
-                            <CheckCircle2 className="w-2.5 h-2.5" />
-                          </div>
-                          {img.usedAnalysis && (
-                            <div className="w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.7)]" title="AI Analyzed" />
-                          )}
-                        </div>
-                      )}
-
-                      {img.status === 'error' && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/60 pointer-events-none">
-                          <div className="bg-red-500 text-white p-1 rounded-full shadow-lg mb-1">
-                            <X className="w-4 h-4" />
-                          </div>
-                          <p className="text-[9px] font-bold text-white text-center px-2 py-0.5 bg-red-500/80 rounded w-[90%] truncate">{img.error || 'Failed'}</p>
-                        </div>
-                      )}
-
-                      {/* Desktop overlay */}
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex items-center justify-center gap-2 pointer-events-none group-hover:pointer-events-auto">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); openImageDetail(img); }}
-                          className="p-2 bg-white rounded-full text-accent hover:scale-110 transition-transform pointer-events-auto"
-                        >
-                          <Layers className="w-5 h-5" />
-                        </button>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); removeImage(img.id); }}
-                          className="p-2 bg-white rounded-full text-red-500 hover:scale-110 transition-transform pointer-events-auto"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-
-                      {/* Mobile remove button */}
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); removeImage(img.id); }}
-                        className="md:hidden absolute top-2 right-2 p-1.5 bg-black/50 backdrop-blur-md rounded-full text-white/90 hover:bg-red-500 hover:text-white transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    
-                    <div className="p-1.5 flex items-center justify-between">
-                      <p className="text-[8px] font-mono text-text-muted truncate max-w-[100px]">{img.file.name}</p>
-                      {img.status === 'completed' && (
-                        <button 
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (!img.resultPreview) return;
-                            const originalName = img.file.name;
-                            const dotIndex = originalName.lastIndexOf('.');
-                            const nameWithoutExt = dotIndex !== -1 ? originalName.substring(0, dotIndex) : originalName;
-                            const ext = dotIndex !== -1 ? originalName.substring(dotIndex) : '.jpg';
-                            
-                            const response = await fetch(img.resultPreview);
-                            const blob = await response.blob();
-                            saveAs(blob, `${nameWithoutExt}${suffix}${ext}`);
-                          }}
-                          className="text-accent hover:text-accent-dark transition-colors"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
-        </div>
-      </div>
-    </main>
-
-      {/* Memory Drawer */}
-      <AnimatePresence>
-        {showMemory && (
-          <>
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowMemory(false)}
-              className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50"
-            />
-            <motion.div 
-              initial={{ x: '100%', opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: '100%', opacity: 0 }}
-              className="fixed right-0 top-0 bottom-0 w-full bg-[#fcfcfc] z-50 shadow-2xl flex flex-col"
-            >
-              <div className="p-4 sm:p-10 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between bg-white sticky top-0 z-10 gap-4">
-                <div className="flex items-center justify-between w-full sm:w-auto">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-black rounded-2xl text-white">
-                      <History size={24} />
-                    </div>
-                    <div>
-                      <h2 className="font-display font-black text-3xl tracking-tight uppercase leading-none">WORK SESSIONS</h2>
-                      <p className="text-[10px] font-bold text-gray-400 mt-2 uppercase tracking-[0.2em]">Archived Enhancement History</p>
-                    </div>
-                  </div>
-                  <button onClick={() => setShowMemory(false)} className="p-3 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-100 sm:hidden shadow-sm">
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => setHistoryTab('batches')}
-                    className={`text-[10px] font-black uppercase tracking-widest px-6 py-3 rounded-xl transition-all shadow-sm ${historyTab === 'batches' ? 'bg-black text-white' : 'bg-white text-gray-500 hover:bg-gray-50 border border-gray-100'}`}
-                  >
-                    Sessions
-                  </button>
-                  <button 
-                    onClick={() => setHistoryTab('edits')}
-                    className={`text-[10px] font-black uppercase tracking-widest px-6 py-3 rounded-xl transition-all shadow-sm ${historyTab === 'edits' ? 'bg-black text-white' : 'bg-white text-gray-500 hover:bg-gray-50 border border-gray-100'}`}
-                  >
-                    Individual Edits
-                  </button>
-                  <button onClick={() => setShowMemory(false)} className="hidden sm:block p-3 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-100 shadow-sm bg-white">
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 sm:p-8">
-                {historyTab === 'batches' ? (
-                  <div className="grid grid-cols-1 gap-6">
-                    {batches.length === 0 ? (
-                      <div className="col-span-full text-center py-40 text-gray-400 bg-white rounded-[40px] border border-dashed border-gray-200 shadow-sm">
-                        <Folder size={64} className="mx-auto mb-6 opacity-10" />
-                        <p className="text-sm font-black uppercase tracking-widest">No sessions recorded</p>
-                      </div>
-                    ) : (
-                      batches.map((batch) => (
-                        <div key={batch.id} className="bg-white rounded-[32px] overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all border border-gray-100 flex flex-col group">
-                          <div className="grid grid-cols-4 h-32 bg-gray-50 border-b border-gray-50 overflow-hidden">
-                            {batch.thumbnails.concat(Array(4).fill(null)).slice(0, 4).map((thumb, idx) => (
-                              <div key={idx} className="bg-gray-100 overflow-hidden relative group/thumb">
-                                {thumb ? (
-                                  <img src={thumb} alt="Preview" className="w-full h-full object-cover grayscale-[0.3] group-hover/thumb:grayscale-0 transition-all duration-700 transform group-hover/thumb:scale-110" />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center opacity-5">
-                                    <ImageIcon size={16} />
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="p-8 flex-1 flex flex-col">
-                            <div className="flex items-start justify-between mb-6">
-                              <div className="flex-1">
-                                <h3 className="font-display font-black text-2xl tracking-tight uppercase leading-tight mb-2 line-clamp-1">{batch.title}</h3>
-                                <div className="flex items-center gap-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                                  <div className="flex items-center gap-1">
-                                    <Clock size={12} className="text-accent" />
-                                    <span>{new Date(batch.timestamp).toLocaleDateString()}</span>
-                                  </div>
-                                  <span className="opacity-30">|</span>
-                                  <div className="flex items-center gap-1">
-                                    <ImageIcon size={12} className="text-accent" />
-                                    <span>{batch.imageIds.length} Photos</span>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex gap-2 shrink-0">
-                                <button 
-                                  className="p-3 bg-gray-50 rounded-2xl hover:bg-black hover:text-white transition-all border border-gray-100"
-                                  title="Download Batch"
-                                  onClick={() => downloadBatch(batch)}
-                                >
-                                  <Download size={16} />
-                                </button>
-                                <button 
-                                  className="p-3 bg-gray-50 rounded-2xl hover:bg-black hover:text-white transition-all border border-gray-100"
-                                  title="Restore"
-                                  onClick={async () => {
-                                    const logId = addNetworkLog('Session Restore', `Restoring ${batch.title}...`);
-                                    const restoredImages: ImageFile[] = [];
-                                    for (const id of batch.imageIds) {
-                                      const m = await getFullMemoryItem(id);
-                                      if (m) {
-                                        restoredImages.push({
-                                          id: m.id,
-                                          file: new File([], 'Restored File'), 
-                                          preview: m.originalThumbnail || m.originalImage || '',
-                                          status: 'completed',
-                                          resultPreview: m.editedImage ? await dataUrlToBlobUrl(m.editedImage) : undefined,
-                                          analysis: m.analysis,
-                                          usedAnalysis: m.usedAnalysis,
-                                          finalPrompt: m.finalPrompt || m.prompt,
-                                          memoryId: m.id
-                                        });
-                                      }
-                                    }
-                                    if (restoredImages.length > 0) {
-                                      setImages(restoredImages);
-                                      if (batch.prompt) setPrompt(batch.prompt);
-                                      if (batch.systemInstruction) {
-                                        setSystemInstruction(batch.systemInstruction);
-                                        saveSystemInstruction(batch.systemInstruction);
-                                      }
-                                      setShowMemory(false);
-                                      updateNetworkLog(logId, 'success', 'Session restored.');
-                                    } else {
-                                      updateNetworkLog(logId, 'error', 'No images found.');
-                                    }
-                                  }}
-                                >
-                                  <Folder size={16} />
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="flex-1">
-                              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 mb-6 italic">
-                                <p className="text-[11px] text-gray-500 font-medium leading-relaxed line-clamp-3">
-                                  &quot;{batch.prompt || memory.find(m => m.id === batch.imageIds[0])?.prompt || 'No prompt info'}&quot;
-                                </p>
-                              </div>
-
-                              <div className="flex flex-wrap gap-2 mb-8">
-                                {batch.tags?.map(tag => (
-                                  <span key={tag} className="text-[9px] font-black uppercase tracking-widest bg-accent text-white px-3 py-1.5 rounded-lg">
-                                    {tag}
-                                  </span>
-                                ))}
-                                {batch.address && (
-                                  <span className="text-[9px] font-black uppercase tracking-widest bg-gray-900 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                                    <MapPin size={10} />
-                                    {batch.address.split(',')[0]}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            
-                            <div className="mt-auto pt-6 border-t border-gray-50 flex items-center justify-between">
-                              <button 
-                                onClick={() => {
-                                  if (batch.prompt) setPrompt(batch.prompt);
-                                  if (batch.systemInstruction) {
-                                    setSystemInstruction(batch.systemInstruction);
-                                    saveSystemInstruction(batch.systemInstruction);
-                                  }
-                                  alert("Config restored.");
-                                }}
-                                className="text-[10px] font-black uppercase tracking-widest text-accent hover:underline flex items-center gap-2"
-                              >
-                                <RefreshCw size={12} />
-                                Reuse Config
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-gray-100">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Individual Edit Log</p>
-                      <div className="flex gap-2">
-                        <input
-                          type="file"
-                          ref={importInputRef}
-                          className="hidden"
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const promptInput = window.prompt("Paste the prompt for this record (optional):") || "Manual Import";
-                              const base64 = await fileToBase64(file);
-                              await saveToMemory({
-                                id: crypto.randomUUID(),
-                                timestamp: Date.now(),
-                                prompt: promptInput,
-                                status: 'completed',
-                                originalImage: base64,
-                                editedImage: base64,
-                                settings: { prompt: promptInput, model: 'manual-import' }
-                              });
-                              alert("History entry created successfully.");
-                            }
-                            // Reset input
-                            e.target.value = '';
-                          }}
-                        />
-                        <button 
-                          onClick={() => importInputRef.current?.click()}
-                          className="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline flex items-center gap-1"
-                        >
-                          <Upload size={10} />
-                          Import Result
-                        </button>
-                        <button 
-                          onClick={async () => {
-                            if (confirm('Clear all history?')) {
-                              await clearMemory();
-                            }
-                          }}
-                          className="text-[10px] font-bold uppercase tracking-widest text-red-500 hover:underline flex items-center gap-1"
-                        >
-                          <Trash2 size={10} />
-                          Nuke Everything
-                        </button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 gap-4">
-                      {memory.map((item) => (
-                        <div key={item.id} className="bg-white p-6 rounded-[30px] border border-gray-100 hover:shadow-lg transition-all group">
-                          <div className="flex items-center justify-between mb-4">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-mono text-text-muted">
-                                  {new Date(item.timestamp).toLocaleString()}
-                                </span>
-                                {item.status === 'pending' && (
-                                  <span className="flex items-center gap-1 text-[8px] font-bold uppercase text-yellow-600 bg-yellow-50 px-1.5 py-0.5 rounded border border-yellow-200">
-                                    <Loader2 size={8} className="animate-spin" />
-                                    Pending
-                                  </span>
-                                )}
-                                {item.status === 'error' && (
-                                  <span className="text-[8px] font-bold uppercase text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200" title={item.error}>
-                                    Error
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex gap-3">
-                                <button 
-                                  onClick={async () => {
-                                    const full = await getFullMemoryItem(item.id);
-                                    if (full?.originalImage) {
-                                      saveAs(full.originalImage, `original_${item.id}.jpg`);
-                                    } else {
-                                      alert("Full resolution original not found.");
-                                    }
-                                  }}
-                                  className="text-[10px] font-black uppercase text-gray-500 hover:underline flex items-center gap-1"
-                                >
-                                  <Download size={10} />
-                                  Original
-                                </button>
-                                <button 
-                                  onClick={async () => {
-                                    const full = await getFullMemoryItem(item.id);
-                                    if (full?.editedImage) {
-                                      saveAs(full.editedImage, `processed_${item.id}.jpg`);
-                                    } else {
-                                      alert("Full resolution result not found.");
-                                    }
-                                  }}
-                                  className="text-[10px] font-black uppercase text-blue-600 hover:underline flex items-center gap-1"
-                                >
-                                  <Download size={10} />
-                                  Full-Size Result
-                                </button>
-                                {(!item.editedThumbnail && item.status === 'pending') && (
-                                  <span className="text-[9px] text-gray-400 italic">Processing...</span>
-                                )}
-                                <button 
-                                  onClick={() => {
-                                    setPrompt(item.prompt);
-                                    if (item.systemInstruction) {
-                                      setSystemInstruction(item.systemInstruction);
-                                      saveSystemInstruction(item.systemInstruction);
-                                    }
-                                    if (item.settings?.resolution) setResolution(item.settings.resolution);
-                                    alert("Archived session configuration restored.");
-                                  }}
-                                  className="text-[10px] font-black uppercase text-accent hover:underline"
-                                >
-                                  Reuse Config
-                                </button>
-                              </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 mb-4">
-                              <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-gray-50 border border-gray-100">
-                                {(item.originalThumbnail || item.originalImage) ? (
-                                  item.mediaType === 'video' && (item.originalThumbnail || item.originalImage)?.includes('video') ? (
-                                    <video src={item.originalThumbnail || item.originalImage} className="w-full h-full object-cover" autoPlay loop muted playsInline />
-                                  ) : (
-                                    <img src={item.originalThumbnail || item.originalImage} className="w-full h-full object-cover" alt="Original" />
-                                  )
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
-                                )}
-                              </div>
-                              <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-gray-100 border border-gray-100">
-                                {(item.editedThumbnail || item.editedImage) ? (
-                                  item.mediaType === 'video' ? (
-                                    <video src={item.editedThumbnail || item.editedImage} className="w-full h-full object-cover" autoPlay loop muted playsInline />
-                                  ) : (
-                                    <img src={item.editedThumbnail || item.editedImage} className="w-full h-full object-cover" alt="Edited" />
-                                  )
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
-                                )}
-                              </div>
-                          </div>
-                          <p className="text-[11px] text-gray-500 italic leading-snug line-clamp-2">&quot;{item.prompt}&quot;</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Settings Drawer */}
-      <AnimatePresence>
-        {showSettingsDrawer && (
-          <>
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowSettingsDrawer(false)}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
-            />
-            <motion.div 
-              initial={{ x: '100%', opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: '100%', opacity: 0 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white shadow-2xl z-50 flex flex-col"
-            >
-              <div className="p-6 border-b border-border flex items-center justify-between bg-gray-50/50">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    <Settings className="w-5 h-5 text-gray-700" />
-                  </div>
-                  <div>
-                    <h2 className="font-display font-bold text-lg leading-tight">Settings</h2>
-                    <p className="text-[10px] text-text-muted uppercase tracking-widest font-bold">Preferences & Debug</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowSettingsDrawer(false)}
-                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-6 overflow-y-auto flex-1">
-                {/* Property Address */}
-                <section>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2 block">Property Address (Batch Title)</label>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Property Address</label>
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                   <input 
-                    type="text"
-                    value={propertyAddress}
+                    type="text" 
+                    value={propertyAddress} 
                     onChange={(e) => setPropertyAddress(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-bg border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-all text-xs"
-                    placeholder="123 Main St, New York, NY"
+                    className="w-full text-sm border border-slate-200 rounded-lg pl-9 pr-3 py-2 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-slate-400 outline-none transition-all"
+                    placeholder="e.g. 42 Oak Drive, Beverly Hills, CA"
                   />
-                  <p className="mt-1 text-[8px] text-text-muted italic">This will be used as the collection name for this batch.</p>
-                </section>
-
-                {/* Image Analysis Toggle */}
-                <section className="flex items-center justify-between">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted block">Auto-Analyze Images</label>
-                    <p className="text-[9px] text-gray-500">Enable automatic room analysis on upload</p>
-                  </div>
-                  <button 
-                    onClick={() => setAutoAnalyzeOnUpload(!autoAnalyzeOnUpload)}
-                    className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors ${autoAnalyzeOnUpload ? 'bg-black' : 'bg-gray-200'}`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${autoAnalyzeOnUpload ? 'translate-x-4' : 'translate-x-0'}`} />
-                  </button>
-                </section>
-
-                <hr className="border-border" />
-
-                {/* Filename Suffix */}
-                <section>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2 block">Filename Suffix</label>
-                  <input 
-                    type="text"
-                    value={suffix}
-                    onChange={(e) => setSuffix(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-bg border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-all text-xs"
-                    placeholder="_processed"
-                  />
-                </section>
-
-                <hr className="border-border" />
-
-
-
-                {/* Concurrency Limit */}
-                <section>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Concurrency Limit</label>
-                    <span className="text-[10px] font-mono font-bold text-accent bg-accent/10 px-2 py-0.5 rounded-full">{concurrencyLimit} threads</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="1" 
-                    max="10" 
-                    value={concurrencyLimit} 
-                    onChange={(e) => setConcurrencyLimit(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-accent"
-                  />
-                  <p className="mt-1 text-[8px] text-text-muted">Lower this value (1-2) if you encounter &quot;Quota Exceeded&quot; errors. Image generation models have stricter rate limits than text models.</p>
-                </section>
-
-                <hr className="border-border" />
-                
-                {/* Network Monitor */}
-                <section>
-                  <div className="flex items-center justify-between mb-3">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted flex items-center gap-2">
-                      <Terminal size={12} className="text-gray-400" />
-                      Network Monitor
-                    </label>
-                    <button 
-                      onClick={() => setNetworkLog([])}
-                      className="text-[9px] font-bold uppercase text-accent hover:underline"
-                    >
-                      Clear Logs
-                    </button>
-                  </div>
-                  <div className="bg-gray-900 rounded-xl overflow-hidden border border-gray-800">
-                    <div className="max-h-[200px] overflow-y-auto p-2 font-mono text-[9px] space-y-1.5 scrollbar-thin scrollbar-thumb-gray-800">
-                      {networkLog.length === 0 ? (
-                        <p className="text-gray-500 italic p-4 text-center">No active requests.</p>
-                      ) : (
-                        networkLog.map(log => (
-                          <div key={log.id} className="flex gap-2 leading-tight">
-                            <span className="text-gray-500 shrink-0">[{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]</span>
-                            <span className={`shrink-0 font-bold ${log.status === 'pending' ? 'text-yellow-400 animate-pulse' : log.status === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-                              {log.status === 'pending' ? 'RUN' : log.status === 'success' ? 'OK' : 'ERR'}
-                            </span>
-                            <span className="text-gray-300 break-all">{log.message}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between">
-                    <p className="text-[8px] text-text-muted">Real-time log of background tasks and AI requests.</p>
-                    {user && (
-                      <button 
-                        onClick={() => {
-                          const id = addNetworkLog('Database Sync', 'Manual sync triggered...');
-                          syncLocalToFirestore(user.uid)
-                            .then(() => updateNetworkLog(id, 'success', 'Manual sync complete.'))
-                            .catch(e => updateNetworkLog(id, 'error', `Sync failed: ${e.message}`));
-                        }}
-                        className="text-[8px] font-bold uppercase text-accent hover:underline flex items-center gap-1"
-                      >
-                        <RefreshCw size={8} />
-                        Retry Sync
-                      </button>
-                    )}
-                  </div>
-                </section>
-
-                <hr className="border-border" />
-
-                {/* Prompt Debugger */}
-                <section>
-                  <button 
-                    onClick={() => setShowPromptPreview(!showPromptPreview)}
-                    className="w-full flex items-center justify-between p-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors group mb-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Terminal className="w-3.5 h-3.5 text-gray-400 group-hover:text-accent" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">Prompt Debugger</span>
-                    </div>
-                    <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showPromptPreview ? 'rotate-90' : ''}`} />
-                  </button>
-                  
-                  <AnimatePresence>
-                    {showPromptPreview && (
-                      <motion.div 
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden space-y-3"
-                      >
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[9px] font-bold uppercase tracking-widest text-text-muted flex items-center gap-1">
-                              <Edit3 size={10} /> System Instruction
-                            </label>
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => {
-                                  const defaultInst = "You are a technically savvy, OCD creative director for high-end real estate photography. Your goal is to achieve a 'DAYLIGHT AIRY DIFFUSED NATURAL' style that looks professionally edited but remains grounded in reality. \n\nMaintain the exact structural integrity and perspective of the 'TARGET IMAGE'. Use 'SPATIAL CONTEXT' images only to understand the room's geometry and light sources. Use 'STYLE REFERENCE' images only if explicitly requested for aesthetic cues. Return ONLY the edited image data.";
-                                  setSystemInstruction(defaultInst);
-                                  saveSystemInstruction(defaultInst);
-                                }}
-                                className="text-[9px] text-gray-400 hover:text-accent transition-colors"
-                              >
-                                Reset
-                              </button>
-                            </div>
-                          </div>
-                          <textarea 
-                            value={systemInstruction}
-                            onChange={(e) => setSystemInstruction(e.target.value)}
-                            onBlur={() => saveSystemInstruction(systemInstruction)}
-                            className="w-full min-h-[150px] p-2 bg-gray-900 rounded-lg border border-gray-800 text-[9px] font-mono text-green-400/80 leading-relaxed outline-none focus:border-accent focus:ring-1 focus:ring-accent resize-y"
-                            placeholder="Enter system instructions..."
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-bold uppercase tracking-widest text-text-muted flex items-center gap-1">
-                            <Info size={10} /> Final User Prompt
-                          </label>
-                          <div className="p-2 bg-gray-900 rounded-lg border border-gray-800">
-                            <p className="text-[9px] font-mono text-blue-400/80 leading-relaxed break-words">
-                              {prompt}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        <p className="text-[8px] text-text-muted italic">
-                          The model receives the System Instruction first, followed by the image data and the Final User Prompt.
-                        </p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </section>
-
+                </div>
               </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
 
-      {/* Image Detail Modal */}
-      <AnimatePresence>
-        {selectedImage && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-8">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedImage(null)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-xl"
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Property Tags</label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {propertyTags.map((tag, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-slate-200">
+                      <Tag className="w-2.5 h-2.5" />
+                      {tag}
+                      <button onClick={() => removeTag(idx)} className="text-slate-400 hover:text-slate-600 font-bold ml-1">×</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={newTagInput} 
+                    onChange={(e) => setNewTagInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addTag()}
+                    className="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-slate-400 outline-none"
+                    placeholder="e.g. LivingRoom, Exterior"
+                  />
+                  <button onClick={addTag} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-xs font-semibold">Add</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Media Batch Upload Dropzone */}
+          <div 
+            id="dropzone"
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleFileDrop}
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+              isDragOver 
+                ? 'border-slate-800 bg-slate-50' 
+                : 'border-[#E2E8F0] bg-white hover:border-slate-300'
+            }`}
+          >
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileSelect} 
+              multiple 
+              className="hidden" 
+              accept="image/*,video/*"
             />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="relative w-full max-w-6xl h-full md:h-[85vh] bg-[#1A1C1E] md:rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row"
-            >
-              <div className="w-full h-[55vh] md:h-full shrink-0 md:shrink md:flex-1 relative bg-black flex items-center justify-center overflow-hidden group/viewer">
-                {selectedImage.resultPreview || selectedImage.result ? (
-                  showSlider && selectedImage.preview ? (
-                    <BeforeAfterSlider 
-                      before={selectedImage.preview} 
-                      after={selectedImage.resultPreview || selectedImage.result!} 
-                    />
-                  ) : (
-                    selectedImage.mediaType === 'video' && selectedImage.resultPreview ? (
-                      <video 
-                        src={selectedImage.resultPreview}
-                        autoPlay
-                        loop
-                        playsInline
-                        controls
-                        className="max-w-full max-h-full object-contain"
-                      />
-                    ) : (
-                      <img 
-                        src={selectedImage.resultPreview || selectedImage.result} 
-                        className="max-w-full max-h-full object-contain"
-                        alt="Result"
-                      />
-                    )
-                  )
-                ) : (
-                  selectedImage.mediaType === 'video' && selectedImage.preview && selectedImage.preview.includes('blob:') ? (
-                    <video 
-                      src={selectedImage.preview} 
-                      className="max-w-full max-h-full object-contain"
-                      autoPlay loop muted playsInline
-                    />
-                  ) : (
-                    <img 
-                      src={selectedImage.preview || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='} 
-                      className="max-w-full max-h-full object-contain"
-                      alt="Detail"
-                    />
-                  )
-                )}
-                
-                {/* Navigation Arrows */}
+            <div className="flex flex-col items-center gap-3">
+              <div className="bg-slate-50 p-3 rounded-full border border-slate-100">
+                <Upload className="w-6 h-6 text-slate-500 animate-bounce" />
+              </div>
+              <div>
                 <button 
-                  onClick={(e) => { e.stopPropagation(); goToPreviousImage(); }}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all opacity-100 md:opacity-0 md:group-hover/viewer:opacity-100 z-20"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-sm font-bold text-slate-800 hover:underline"
                 >
-                  <ChevronLeft className="w-6 h-6" />
+                  Upload Property Files
                 </button>
-                <button 
-                  onClick={(e) => { e.stopPropagation(); goToNextImage(); }}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all opacity-100 md:opacity-0 md:group-hover/viewer:opacity-100 z-20"
-                >
-                  <ChevronRight className="w-6 h-6" />
-                </button>
+                <p className="text-xs text-slate-400 mt-1">Drag and drop photos or videos here</p>
+                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mt-1.5">Max resolution 4K supported</p>
+              </div>
+            </div>
+          </div>
 
-                {/* Slider Toggle */}
-                {(selectedImage.resultPreview || selectedImage.result) && selectedImage.preview && (
-                  <button 
-                    onClick={() => setShowSlider(!showSlider)}
-                    className={`
-                      absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full backdrop-blur-md transition-all z-20 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest
-                      ${showSlider ? 'bg-accent text-white' : 'bg-white/10 text-white hover:bg-white/20'}
-                    `}
+          {/* Section 3: Professional Prompts & Settings */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-[#475569] mb-4 flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-slate-400" />
+              Editor Directives
+            </h2>
+
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Enhancement Instruction Prompt</label>
+                <textarea 
+                  value={enhancementPrompt} 
+                  onChange={(e) => setEnhancementPrompt(e.target.value)}
+                  rows={3}
+                  className="w-full text-xs font-medium border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-slate-400 outline-none resize-none"
+                  placeholder="Directives for the AI staging engine..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Expert System Correction Instruction</label>
+                <textarea 
+                  value={systemInstruction} 
+                  onChange={(e) => setSystemInstruction(e.target.value)}
+                  rows={2}
+                  className="w-full text-[11px] font-medium border border-slate-200 rounded-lg p-2 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-slate-400 outline-none resize-none"
+                  placeholder="Expert rules applied behind the scenes..."
+                />
+                <p className="text-[10px] text-slate-400 mt-1 leading-normal font-medium">
+                  💡 <span className="text-slate-500 font-semibold">Literal Mode:</span> Clear this box entirely to execute your Enhancement Prompt with absolutely zero hidden correction guidelines or background instruction dilutions.
+                </p>
+              </div>
+
+              {/* Grid of advanced parameters */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Resolution Limit</label>
+                  <select 
+                    value={resolution} 
+                    onChange={(e) => setResolution(e.target.value as ImageResolution)}
+                    className="w-full text-xs font-semibold border border-slate-200 rounded-lg p-1.5 bg-slate-50 outline-none"
                   >
-                    <Maximize2 className="w-3.5 h-3.5" />
-                    {showSlider ? 'Hide Comparison' : 'Compare Original'}
-                  </button>
-                )}
-                
-                <button 
-                  onClick={() => setSelectedImage(null)}
-                  className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-colors z-20"
-                >
-                  <X className="w-6 h-6" />
-                </button>
+                    <option value="1K">1K Standard</option>
+                    <option value="2K">2K Full HD</option>
+                    <option value="4K">4K Ultra HD</option>
+                  </select>
+                </div>
 
-                {/* Bottom Thumbnail Strip */}
-                <div className="absolute bottom-4 left-4 right-4 hidden md:flex justify-center pointer-events-none">
-                  <div className="bg-black/50 backdrop-blur-md p-1.5 rounded-2xl flex gap-1.5 overflow-x-auto max-w-full no-scrollbar pointer-events-auto border border-white/10">
-                    {filteredImages.map((img) => (
-                      <button
-                        key={img.id}
-                        onClick={(e) => { e.stopPropagation(); openImageDetail(img); }}
-                        className={`
-                          relative w-10 h-10 rounded-lg overflow-hidden shrink-0 transition-all border-2 
-                          ${selectedImage.id === img.id ? 'border-accent scale-110 shadow-lg' : 'border-transparent opacity-50 hover:opacity-80'}
-                        `}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Aspect Ratio</label>
+                  <select 
+                    value={aspectRatio} 
+                    onChange={(e) => setAspectRatio(e.target.value as ImageAspectRatio)}
+                    className="w-full text-xs font-semibold border border-slate-200 rounded-lg p-1.5 bg-slate-50 outline-none"
+                  >
+                    <option value="auto">Auto Match</option>
+                    <option value="1:1">1:1 Square</option>
+                    <option value="4:3">4:3 Standard</option>
+                    <option value="16:9">16:9 Wide</option>
+                    <option value="3:2">3:2 Classic</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Edit / Create Mode</label>
+                  <select 
+                    value={opMode} 
+                    onChange={(e) => setOpMode(e.target.value as OperationMode)}
+                    className="w-full text-xs font-semibold border border-slate-200 rounded-lg p-1.5 bg-slate-50 outline-none"
+                  >
+                    <option value="edit">Enhance / Stage (Edit)</option>
+                    <option value="create">Pure Generator (Create)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Target Media</label>
+                  <select 
+                    value={mediaType} 
+                    onChange={(e) => setMediaType(e.target.value as MediaType)}
+                    className="w-full text-xs font-semibold border border-slate-200 rounded-lg p-1.5 bg-slate-50 outline-none"
+                  >
+                    <option value="image">Still Photos</option>
+                    <option value="video">Staged Walkthroughs</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Preset Shortcuts */}
+              {favoritePrompts.length > 0 && (
+                <div className="pt-2">
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Quick Presets</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {favoritePrompts.slice(0, 5).map((fav) => (
+                      <button 
+                        key={fav.id}
+                        onClick={() => handleApplyFavorite(fav)}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded"
                       >
-                        {img.mediaType === 'video' && img.resultPreview ? (
-                          <video 
-                            src={img.resultPreview} 
-                            className="w-full h-full object-cover"
-                            autoPlay loop muted playsInline
-                          />
-                        ) : (
-                          <img 
-                            src={img.resultPreview || img.preview} 
-                            className="w-full h-full object-cover"
-                            alt="Thumb"
-                          />
-                        )}
+                        {fav.name}
+                        <span onClick={(e) => handleDeleteFavorite(e, fav.id)} className="text-slate-400 hover:text-red-500 font-bold ml-1">×</span>
                       </button>
                     ))}
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 4: Process Trigger */}
+          <div className="flex flex-col gap-3">
+            {isProcessing && (
+              <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
+                <div 
+                  className="bg-slate-800 h-full transition-all duration-300 rounded-full"
+                  style={{ width: `${processingProgress}%` }}
+                />
               </div>
-              
-              <div className="w-full md:w-96 p-5 sm:p-8 flex-1 md:flex-none flex flex-col gap-6 text-white border-t md:border-t-0 md:border-l border-white/10 overflow-y-auto">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className="font-display font-bold text-xl">Photo Details</h3>
-                    <span className="text-[10px] text-gray-500 font-mono">
-                      {images.findIndex(img => img.id === selectedImage.id) + 1} / {images.length}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400 font-mono truncate">{selectedImage.file.name}</p>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2">Status</p>
-                      <div className="flex items-center gap-2">
-                        {selectedImage.status === 'completed' ? (
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-2 text-green-400 text-sm font-bold">
-                              <CheckCircle2 className="w-4 h-4" />
-                              <span>Processed</span>
-                            </div>
-                            {selectedImage.usedAnalysis && (
-                              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-purple-500/20 border border-purple-500/30 rounded-full text-[8px] text-purple-400 uppercase font-black tracking-tighter">
-                                <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-                                AI Analyzed
-                              </div>
-                            )}
-                          </div>
-                        ) : selectedImage.status === 'processing' ? (
-                          <div className="flex items-center gap-2 text-yellow-400 text-sm font-bold">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>Processing</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 text-gray-400 text-sm font-bold">
-                            <ImageIcon className="w-4 h-4" />
-                            <span>Idle</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+            )}
+            
+            <button 
+              id="process-batch-btn"
+              onClick={handleProcessBatch}
+              disabled={isProcessing || uploadedFiles.length === 0}
+              className={`w-full py-3 px-4 rounded-xl font-bold text-sm tracking-wide shadow-sm flex items-center justify-center gap-2 transition-all active:scale-98 ${
+                isProcessing || uploadedFiles.length === 0
+                  ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                  : 'bg-[#1E293B] hover:bg-[#334155] text-white'
+              }`}
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  Processing Batch ({processingProgress}%)
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  Enhance & Stage All ({uploadedFiles.length} media)
+                </>
+              )}
+            </button>
+          </div>
 
-                    <button 
-                      onClick={() => handleAnalyze()}
-                      disabled={isAnalyzing}
-                      className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors flex flex-col items-start gap-1"
-                    >
-                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Analysis</p>
-                      <div className="flex items-center gap-2 text-accent text-sm font-bold">
-                        {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                        <span>{isAnalyzing ? 'Analyzing...' : 'Analyze'}</span>
-                      </div>
-                    </button>
-                  </div>
+        </div>
 
-                  {analysisResult && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-4 rounded-2xl bg-accent/5 border border-accent/20 text-[10px] leading-relaxed text-gray-300"
-                    >
-                      <p className="font-bold text-accent uppercase tracking-widest mb-2 flex items-center gap-1">
-                        <Search size={10} /> Gemini Analysis
-                      </p>
-                      <div className="prose prose-invert prose-xs max-w-none mb-3">
-                        <ReactMarkdown>{analysisResult}</ReactMarkdown>
-                      </div>
-                      <button 
-                        onClick={() => {
-                          setPrompt(prev => {
-                            const header = "\n\n### ANALYSIS RECOMMENDATIONS:\n";
-                            if (prev.includes(header)) return prev;
-                            return prev + header + analysisResult;
-                          });
-                          alert("Recommendations incorporated into global enhancement prompt.");
-                        }}
-                        className="w-full py-1.5 bg-accent/20 hover:bg-accent/30 text-accent rounded-lg border border-accent/30 transition-all font-bold uppercase tracking-widest text-[9px] flex items-center justify-center gap-2"
-                      >
-                        <Edit3 size={10} />
-                        Apply to Global Prompt
-                      </button>
-                    </motion.div>
-                  )}
+        {/* Right Side: Active Queue & Comparison Canvas */}
+        <div className="lg:col-span-7 flex flex-col gap-6">
+          
+          {/* Section 1: Active Batch Uploads Queue list */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-[#475569] flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-slate-400" />
+                Active Uploads Queue ({uploadedFiles.length})
+              </h2>
+              {uploadedFiles.length > 0 && (
+                <button 
+                  id="clear-queue-btn"
+                  onClick={clearUploadsQueue} 
+                  className="text-xs font-semibold text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Clear Queue
+                </button>
+              )}
+            </div>
 
-                  {selectedImage.finalPrompt && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-4 rounded-2xl bg-white/5 border border-white/10"
-                    >
-                      <p className="font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1 text-[9px]">
-                        <MessageSquare size={10} /> Final Processing Prompt
-                      </p>
-                      <div className="text-[10px] text-gray-300 font-mono leading-relaxed bg-black/20 p-3 rounded-xl border border-white/5 max-h-40 overflow-y-auto no-scrollbar">
-                        {selectedImage.finalPrompt}
-                      </div>
-                      {selectedImage.usedAnalysis && (
-                        <div className="mt-2 flex items-center gap-1.5 text-[8px] text-purple-400 font-black uppercase tracking-widest">
-                          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-                          AI Analysis was used
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
+            {uploadedFiles.length === 0 ? (
+              <div className="p-12 text-center border border-dashed border-slate-100 rounded-xl">
+                <ImageIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs text-slate-400">Your uploads queue is empty. Drag in real estate photos above to begin.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-56 overflow-y-auto pr-1">
+                {uploadedFiles.map((item) => {
+                  const qMatch = queue.find(q => q.id === item.id);
+                  const isCompleted = qMatch?.status === 'completed';
+                  const isError = qMatch?.status === 'error';
+                  const isPending = qMatch?.status === 'pending';
+                  const isSelected = selectedQueueItem?.id === item.id;
 
-                  <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex flex-col gap-0.5">
-                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Refine Enhancement</p>
-                        <p className="text-[8px] text-gray-600 font-medium uppercase tracking-wider">
-                          {refineSource === 'original' ? "Source: Original Photo" : "Source: Last Result"}
-                        </p>
-                      </div>
-                      <div className="flex items-center bg-black/20 rounded-lg p-0.5 border border-white/5">
-                        <button 
-                          onClick={() => setRefineSource('original')}
-                          className={`px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md transition-all ${refineSource === 'original' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
-                          title="Apply prompt to the original uploaded file"
-                        >
-                          Original
-                        </button>
-                        <button 
-                          onClick={() => setRefineSource('result')}
-                          disabled={!selectedImage.resultPreview}
-                          className={`px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md transition-all ${refineSource === 'result' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300 disabled:opacity-30'}`}
-                          title={selectedImage.resultPreview ? "Iterate on the current enhanced version" : "Process an image first to refine the result"}
-                        >
-                          Result
-                        </button>
-                      </div>
-                    </div>
-                    <textarea 
-                      value={reprocessPrompt}
-                      onChange={(e) => setReprocessPrompt(e.target.value)}
-                      className="w-full h-24 bg-transparent border-0 outline-none text-xs text-gray-300 resize-none leading-relaxed placeholder:text-gray-700"
-                      placeholder={refineSource === 'original' ? "Prompt for new version from original source..." : "Iterate on the current enhanced result..."}
-                    />
-                    <div className="text-[8px] text-gray-500 mb-2 px-1 italic">
-                      {refineSource === 'original' 
-                        ? "The AI will see the original photo and your new prompt." 
-                        : "The AI will see the last enhanced result and modify it further."}
-                    </div>
-                    <div className="flex gap-2 mt-2">
-                      <button 
-                        onClick={() => reprocessSingle(false)}
-                        disabled={selectedImage.status === 'processing' || (isProcessing && selectedImage.status !== 'completed')}
-                        className="flex-1 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                      >
-                        {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-white/50" />}
-                        {(isProcessing && selectedImage.status !== 'completed') ? 'Queue' : selectedImage.status === 'processing' ? 'Working' : 'Redo'}
-                      </button>
-                      <button 
-                        onClick={() => reprocessSingle(true)}
-                        disabled={selectedImage.status === 'processing' || (isProcessing && selectedImage.status !== 'completed')}
-                        className="flex-1 py-2 bg-accent/20 hover:bg-accent/30 text-accent disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                      >
-                        {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                        {(isProcessing && selectedImage.status !== 'completed') ? 'Queue' : selectedImage.status === 'processing' ? 'Working' : 'New Variation'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {selectedImage.status === 'completed' && (
-                    <button 
-                      onClick={async () => {
-                        if (!selectedImage.resultPreview) return;
-                        const originalName = selectedImage.file.name;
-                        const dotIndex = originalName.lastIndexOf('.');
-                        const nameWithoutExt = dotIndex !== -1 ? originalName.substring(0, dotIndex) : originalName;
-                        const ext = dotIndex !== -1 ? originalName.substring(dotIndex) : '.jpg';
-                        
-                        const response = await fetch(selectedImage.resultPreview);
-                        const blob = await response.blob();
-                        saveAs(blob, `${nameWithoutExt}${suffix}${ext}`);
-                      }}
-                      className="btn-primary w-full flex items-center justify-center gap-2"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Download</span>
-                    </button>
-                  )}
-
-                  <div className="flex gap-2">
-                    <button 
+                  return (
+                    <div 
+                      key={item.id}
                       onClick={() => {
-                        const isFav = !selectedImage.isFavorite;
-                        setImages(prev => prev.map(img => img.id === selectedImage.id ? { ...img, isFavorite: isFav } : img));
-                        setSelectedImage(prev => prev ? { ...prev, isFavorite: isFav } : null);
+                        const currentMatch = queue.find(q => q.id === item.id) || {
+                          id: item.id,
+                          timestamp: Date.now(),
+                          prompt: enhancementPrompt,
+                          status: 'pending',
+                          originalImage: item.base64
+                        };
+                        setSelectedQueueItem(currentMatch);
                       }}
-                      className={`flex-1 py-3 rounded-2xl border transition-all flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest ${
-                        selectedImage.isFavorite 
-                          ? 'bg-amber-500/20 border-amber-500 text-amber-500' 
-                          : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                      className={`relative aspect-[4/3] rounded-lg overflow-hidden border cursor-pointer transition-all ${
+                        isSelected 
+                          ? 'border-slate-800 ring-2 ring-slate-100 shadow-md scale-[0.98]' 
+                          : 'border-slate-100 hover:border-slate-300 shadow-sm'
                       }`}
                     >
-                      <Star className={`w-4 h-4 ${selectedImage.isFavorite ? 'fill-current' : ''}`} />
-                      <span>{selectedImage.isFavorite ? 'Favorited' : 'Favorite'}</span>
-                    </button>
+                      {/* Image Preview */}
+                      <img src={item.base64} alt={item.name} className="w-full h-full object-cover" />
 
-                    <button 
-                      onClick={() => {
-                        if (confirm('Delete this photo?')) {
-                          removeImage(selectedImage.id);
-                          setSelectedImage(null);
-                        }
-                      }}
-                      className="flex-1 py-3 bg-white/5 border border-white/10 hover:bg-red-500/20 hover:border-red-500 hover:text-red-500 rounded-2xl text-[10px] font-bold uppercase tracking-widest transition-all text-gray-400 flex items-center justify-center gap-2"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      <span>Delete</span>
-                    </button>
-                  </div>
-                </div>
+                      {/* Status indicator badge */}
+                      <div className="absolute top-2 right-2 bg-black/50 backdrop-blur-md rounded-full p-1 text-white flex items-center justify-center">
+                        {isCompleted && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                        {isError && <AlertCircle className="w-3.5 h-3.5 text-rose-400" />}
+                        {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />}
+                        {!qMatch && <div className="w-2.5 h-2.5 bg-slate-300 rounded-full" />}
+                      </div>
 
-                <div className="mt-auto pt-6">
-                  <p className="text-[10px] text-gray-500 leading-relaxed">
-                    AI-enhanced using Gemini 2.5 Flash Image. Slide to compare original vs processed.
-                  </p>
-                </div>
+                      {/* Item index / Name footer */}
+                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-white text-[10px] font-semibold truncate">
+                        {item.name}
+                      </div>
+
+                      {/* Delete action overlay */}
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeUploadedFile(item.id);
+                        }}
+                        className="absolute top-2 left-2 p-1 bg-black/60 hover:bg-red-600 rounded-md text-white opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center"
+                        title="Delete photo"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-            </motion.div>
+            )}
           </div>
-        )}
-      </AnimatePresence>
 
-      <AnimatePresence>
-        {showAddressPrompt && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-             <motion.div 
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               className="absolute inset-0 bg-black/60 backdrop-blur-md"
-               onClick={() => {
-                 setImages(prev => [...prev, ...pendingImages]);
-                 setPendingImages([]);
-                 setShowAddressPrompt(false);
-               }}
-             />
-             <motion.div 
-               initial={{ scale: 0.9, opacity: 0, y: 20 }}
-               animate={{ scale: 1, opacity: 1, y: 0 }}
-               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-               className="relative bg-white rounded-[40px] p-10 w-full max-w-lg shadow-2xl overflow-hidden"
-             >
-                <div className="absolute top-0 right-0 p-8">
-                   <button 
-                     onClick={() => {
-                        setImages(prev => [...prev, ...pendingImages]);
-                        setPendingImages([]);
-                        setShowAddressPrompt(false);
-                     }}
-                     className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-                   >
-                     <X size={20} />
-                   </button>
-                </div>
-
-                <div className="flex flex-col gap-6">
-                  <div className="flex flex-col gap-2">
-                    <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
-                      <MapPin size={24} />
-                    </div>
-                    <h2 className="font-display font-black text-4xl tracking-tighter uppercase leading-tight">IDENTIFY BATCH</h2>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">GROUP THESE {pendingImages.length} PHOTOS UNDER A PROPERTY ADDRESS OR COLLECTION NAME.</p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 block">Property Address</label>
-                      <input 
-                        autoFocus
-                        type="text"
-                        value={propertyAddress}
-                        onChange={(e) => setPropertyAddress(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            setImages(prev => [...prev, ...pendingImages]);
-                            setPendingImages([]);
-                            setShowAddressPrompt(false);
-                          }
-                        }}
-                        className="w-full p-4 rounded-2xl bg-gray-50 border border-gray-100 focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm font-medium transition-all"
-                        placeholder="e.g. 742 Evergreen Terrace..."
-                      />
-                    </div>
-
-                    <div className="flex gap-3 pt-2">
-                      <button 
-                        onClick={() => {
-                          setImages(prev => [...prev, ...pendingImages]);
-                          setPendingImages([]);
-                          setShowAddressPrompt(false);
-                        }}
-                        className="flex-1 py-4 bg-black text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-gray-800 transition-all shadow-xl shadow-black/10"
-                      >
-                        Start Session
-                      </button>
-                      <button 
-                         onClick={() => {
-                          setPropertyAddress('');
-                          setImages(prev => [...prev, ...pendingImages]);
-                          setPendingImages([]);
-                          setShowAddressPrompt(false);
-                         }}
-                         className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-gray-200 transition-all"
-                      >
-                        Skip
-                      </button>
-                    </div>
-                  </div>
-                </div>
-             </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Naming Favorite Dialog */}
-      <AnimatePresence>
-        {showNamingFavorite && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl"
-            >
-              <div className="bg-amber-50 px-6 py-4 flex items-center justify-between border-b border-amber-100">
-                <div className="flex items-center gap-2">
-                  <Star className="text-amber-600 w-5 h-5 fill-amber-600" />
-                  <h3 className="text-sm font-black uppercase tracking-widest text-amber-900">Name Favorite Prompt</h3>
-                </div>
-                <button onClick={() => setShowNamingFavorite(false)} className="text-amber-900/40 hover:text-amber-900">
-                  <X size={20} />
+          {/* Section 2: Active Comparison / Staging Canvas Workspace */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm min-h-[440px] flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-[#475569] flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+                Comparison & Staging Workspace
+              </h2>
+              {selectedQueueFullItem?.editedImage && (
+                <button 
+                  onClick={() => downloadProcessed(selectedQueueFullItem)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
                 </button>
-              </div>
-              
-              <div className="p-6 flex flex-col gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted px-1">Favorite Name</label>
-                  <input 
-                    type="text" 
-                    value={favoriteName}
-                    onChange={(e) => setFavoriteName(e.target.value)}
-                    autoFocus
-                    placeholder="e.g. Sunny Day Preset"
-                    className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-xs outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all font-sans"
-                    onKeyDown={(e) => e.key === 'Enter' && handleSaveFavorite()}
+              )}
+            </div>
+
+            {/* Main view renderer */}
+            <div className="flex-1 bg-slate-50 border border-slate-100 rounded-lg overflow-hidden relative flex items-center justify-center">
+              {selectedQueueFullItem ? (
+                selectedQueueFullItem.editedImage ? (
+                  <BeforeAfterSlider 
+                    before={selectedQueueFullItem.originalImage || selectedQueueFullItem.originalThumbnail || ''} 
+                    after={selectedQueueFullItem.editedImage} 
                   />
+                ) : (
+                  <div className="text-center p-8 max-w-sm">
+                    <img src={selectedQueueFullItem.originalImage || selectedQueueFullItem.originalThumbnail} alt="Preview" className="w-48 h-32 object-cover rounded-lg mx-auto mb-4 border border-slate-200 shadow-sm" />
+                    <p className="text-xs font-bold text-slate-800">Ready to Stage</p>
+                    <p className="text-xs text-slate-400 mt-1">This photo hasn't been enhanced yet. Click the main process button to launch the engine.</p>
+                  </div>
+                )
+              ) : (
+                <div className="text-center p-12 max-w-sm">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 text-slate-400 mx-auto mb-3">
+                    <Maximize2 className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-slate-800">Interactive Canvas</p>
+                  <p className="text-xs text-slate-400 mt-1">Select an uploaded real estate photo from the list above to view interactive slide staging comparisons.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Secondary footer details for active selected photo */}
+            {selectedQueueFullItem && (
+              <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400 font-medium">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-slate-800 font-bold">Enhancement Directives used:</span>
+                  <p className="italic text-[11px] text-slate-500">"{selectedQueueFullItem.prompt}"</p>
                 </div>
                 
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted px-1">Prompt Applied</label>
-                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 max-h-32 overflow-y-auto">
-                    <p className="text-[10px] text-gray-600 leading-relaxed font-medium">{pendingFavoritePrompt}</p>
-                  </div>
+                {/* Analyze Action button */}
+                <div className="flex flex-col items-end gap-1 self-end sm:self-auto">
+                  <span className="text-[10px] text-slate-400 font-semibold tracking-wide">OPTIONAL ON-DEMAND</span>
+                  <button 
+                    id="analyze-btn"
+                    onClick={handleAnalyzePhoto}
+                    disabled={isAnalyzing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md transition-colors font-bold text-xs"
+                    title="Audit image quality, structure, and defects"
+                  >
+                    {isAnalyzing ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-600" />
+                        Running Audit...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                        Run AI Real Estate Audit
+                      </>
+                    )}
+                  </button>
                 </div>
+              </div>
+            )}
+          </div>
 
-                <div className="flex items-center gap-3 mt-2">
-                  <button 
-                    onClick={() => setShowNamingFavorite(false)}
-                    className="flex-1 py-3 text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-all rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleSaveFavorite}
-                    disabled={!favoriteName.trim()}
-                    className="flex-1 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[10px] font-bold uppercase tracking-widest transition-all rounded-xl shadow-lg shadow-amber-500/20"
-                  >
-                    Save Favorite
-                  </button>
-                </div>
+          {/* Section 3: AI Weakness and Flaw Analysis Board */}
+          {(activeAnalysis || selectedQueueFullItem?.analysis) && (
+            <div className="bg-slate-50 border border-[#E2E8F0] rounded-xl p-5 shadow-inner">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-[#475569] mb-3 flex items-center gap-1.5">
+                <HelpCircle className="w-4 h-4 text-[#475569]" />
+                AI Real Estate Audit
+              </h2>
+              <div className="text-xs font-medium text-slate-700 leading-relaxed bg-white border border-slate-200 rounded-lg p-3 max-h-56 overflow-y-auto whitespace-pre-line">
+                {activeAnalysis || selectedQueueFullItem?.analysis}
+              </div>
+            </div>
+          )}
+
+        </div>
+      </main>
+
+      {/* Floating Chatbot Assistant Component */}
+      <Chatbot 
+        uploadedImages={uploadedFiles.map(f => ({ url: f.base64, name: f.name }))}
+        onUpdatePrompt={(newPrompt) => setEnhancementPrompt(newPrompt)}
+        onProcessBatch={handleProcessBatch}
+      />
+
+      {/* Footer copyright */}
+      <footer className="border-t border-[#EDF2F7] bg-white py-4 text-center text-[10px] text-slate-400 font-medium tracking-wide">
+        &copy; 2026 BATCHLAB PHOTO ENGINE. POWERED BY GEMINI 3.5 FLASH & FIRESTORE.
+      </footer>
+
+      {/* MODAL 1: Save Favorite Preset Modal */}
+      <AnimatePresence>
+        {showSaveFavModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white border border-slate-200 rounded-xl p-6 max-w-md w-full shadow-2xl"
+            >
+              <h3 className="text-sm font-bold uppercase tracking-wider text-[#1E293B] mb-3">Save Preset</h3>
+              <p className="text-xs text-slate-400 mb-4">Save the current prompt configuration to your account library for future real estate batches.</p>
+              
+              <input 
+                type="text" 
+                value={newFavName} 
+                onChange={(e) => setNewFavName(e.target.value)}
+                placeholder="e.g. Sunny Editorial Interior"
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 focus:bg-white outline-none mb-4"
+              />
+
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowSaveFavModal(false)}
+                  className="px-4 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveFavorite}
+                  className="px-4 py-2 bg-[#1E293B] hover:bg-[#334155] rounded-lg text-xs font-semibold text-white transition-colors"
+                >
+                  Save Preset
+                </button>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
 
-      <Chatbot 
-        uploadedImages={images.map(img => ({ url: img.preview, name: img.file.name }))} 
-        onUpdatePrompt={setPrompt}
-        onProcessBatch={processBatch}
-      />
+      {/* MODAL 2: History sessions archive modal */}
+      <AnimatePresence>
+        {showHistoryModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white border border-slate-200 rounded-xl p-6 max-w-xl w-full shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-[#1E293B]">Archived Work Sessions</h3>
+                <button onClick={() => setShowHistoryModal(false)} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
+              </div>
+
+              {batchesHistory.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  No work sessions found. Create your first batch to start saving sessions.
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 max-h-96 overflow-y-auto pr-1">
+                  {batchesHistory.map((batch) => (
+                    <div 
+                      key={batch.id}
+                      onClick={() => handleLoadBatch(batch)}
+                      className="border border-slate-100 hover:border-slate-300 rounded-lg p-3 bg-slate-50 cursor-pointer flex items-center justify-between gap-4 transition-all hover:scale-[1.01]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex -space-x-2">
+                          {batch.thumbnails.slice(0, 3).map((thumb, idx) => (
+                            <img key={idx} src={thumb} alt="Preview" className="w-8 h-8 rounded-full border border-white object-cover" />
+                          ))}
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-800">{batch.title}</h4>
+                          <p className="text-[10px] text-slate-400">{batch.address || 'No address specified'}</p>
+                          <p className="text-[9px] text-slate-400 mt-0.5">{new Date(batch.timestamp).toLocaleString()}</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-400" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

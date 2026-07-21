@@ -1,7 +1,14 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const genAI = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY || "",
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,7 +19,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await genAI.models.generateContent({
-      model: model || "gemini-3-flash-preview",
+      model: model || "gemini-3.6-flash",
       contents: [
         {
           inlineData: {
@@ -26,7 +33,7 @@ export async function POST(req: NextRequest) {
       ]
     });
 
-    return NextResponse.json({ text: result.candidates?.[0]?.content?.parts?.[0]?.text || "No analysis returned" });
+    return NextResponse.json({ text: result.text || "No analysis returned" });
   } catch (error: any) {
     console.error("Analyze API Error:", error);
     return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });

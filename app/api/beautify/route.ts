@@ -1,7 +1,14 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const genAI = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY || "",
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,16 +28,21 @@ export async function POST(req: NextRequest) {
           mimeType: mimeType,
         },
       },
-      { text: `\nINSTRUCTIONS: ${systemInstruction || "Act as a professional media editor. Enhance the media."}\n\nUSER PROMPT: ${prompt}` }
+      systemInstruction?.trim() 
+        ? { text: `\nINSTRUCTIONS: ${systemInstruction}\n\nUSER PROMPT: ${prompt}` }
+        : { text: `\nUSER PROMPT: ${prompt}` }
     ] : [
-      { text: `INSTRUCTIONS: ${systemInstruction || "Generate media"}\n\nUSER PROMPT: ${prompt}` }
+      systemInstruction?.trim()
+        ? { text: `INSTRUCTIONS: ${systemInstruction}\n\nUSER PROMPT: ${prompt}` }
+        : { text: `USER PROMPT: ${prompt}` }
     ];
 
     const config: any = {};
     if (mediaType !== 'video') {
       config.imageConfig = {
-        imageSize: resolution,
-        aspectRatio: aspectRatio,
+        // Only include non-auto properties
+        ...(resolution && resolution !== 'auto' ? { imageSize: resolution } : {}),
+        ...(aspectRatio && aspectRatio !== 'auto' ? { aspectRatio: aspectRatio } : {})
       };
     }
 

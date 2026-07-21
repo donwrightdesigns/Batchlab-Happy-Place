@@ -12,7 +12,7 @@ export interface MemoryItem {
   editedImage?: string;   // Base64 (Local only)
   originalThumbnail?: string; // Small Base64 for cloud
   editedThumbnail?: string;   // Small Base64 for cloud
-  settings: any;
+  settings?: any;
   isSynced?: boolean;
   analysis?: string;
   isAnalyzing?: boolean;
@@ -20,6 +20,8 @@ export interface MemoryItem {
   finalPrompt?: string;
   systemInstruction?: string;
   mediaType?: 'image' | 'video';
+  address?: string;
+  tags?: string[];
 }
 
 export interface FavoritePrompt {
