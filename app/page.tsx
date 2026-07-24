@@ -39,7 +39,8 @@ import {
   deleteFavoritePrompt, 
   MemoryItem, 
   FavoritePrompt, 
-  Batch 
+  Batch,
+  compressImage
 } from '@/lib/memory';
 import { 
   beautifyImage, 
@@ -181,8 +182,18 @@ export default function Page() {
       }
 
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
+      reader.onloadend = async () => {
+        let base64String = reader.result as string;
+
+        // Compress images to ensure fast, reliable uploads and prevent payload limit failures
+        if (file.type.startsWith('image/')) {
+          try {
+            base64String = await compressImage(base64String, 1920, 0.85);
+          } catch (err) {
+            console.warn("Failed to compress image on upload:", err);
+          }
+        }
+
         const newFileId = Math.random().toString(36).substr(2, 9);
         const fileSizeStr = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
 
@@ -663,9 +674,6 @@ export default function Page() {
                   className="w-full text-[11px] font-medium border border-slate-200 rounded-lg p-2 bg-slate-50 focus:bg-white focus:ring-1 focus:ring-slate-400 outline-none resize-none"
                   placeholder="Expert rules applied behind the scenes..."
                 />
-                <p className="text-[10px] text-slate-400 mt-1 leading-normal font-medium">
-                  💡 <span className="text-slate-500 font-semibold">Literal Mode:</span> Clear this box entirely to execute your Enhancement Prompt with absolutely zero hidden correction guidelines or background instruction dilutions.
-                </p>
               </div>
 
               {/* Grid of advanced parameters */}
@@ -923,24 +931,22 @@ export default function Page() {
                 </div>
                 
                 {/* Analyze Action button */}
-                <div className="flex flex-col items-end gap-1 self-end sm:self-auto">
-                  <span className="text-[10px] text-slate-400 font-semibold tracking-wide">OPTIONAL ON-DEMAND</span>
+                <div className="flex items-center gap-2 self-end sm:self-auto">
                   <button 
                     id="analyze-btn"
                     onClick={handleAnalyzePhoto}
                     disabled={isAnalyzing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md transition-colors font-bold text-xs"
-                    title="Audit image quality, structure, and defects"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-white rounded-md hover:bg-slate-700 transition-colors"
                   >
                     {isAnalyzing ? (
                       <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-600" />
-                        Running Audit...
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Analyzing...
                       </>
                     ) : (
                       <>
-                        <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
-                        Run AI Real Estate Audit
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        AI Analysis
                       </>
                     )}
                   </button>

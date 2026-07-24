@@ -54,7 +54,7 @@ const BATCHES_UPDATE_EVENT = 'rebe_batches_updated';
 const FAVORITES_UPDATE_EVENT = 'rebe_favorites_updated';
 
 // Helper to compress base64 images for Firestore (1MB limit)
-async function compressImage(base64: string, maxWidth = 1400, quality = 0.7): Promise<string> {
+export async function compressImage(base64: string, maxWidth = 1400, quality = 0.7): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64;
