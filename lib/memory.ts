@@ -54,7 +54,7 @@ const BATCHES_UPDATE_EVENT = 'rebe_batches_updated';
 const FAVORITES_UPDATE_EVENT = 'rebe_favorites_updated';
 
 // Helper to compress base64 images for Firestore (1MB limit)
-export async function compressImage(base64: string, maxWidth = 1400, quality = 0.7): Promise<string> {
+async function compressImage(base64: string, maxWidth = 1400, quality = 0.7): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64;
@@ -185,12 +185,6 @@ export async function saveToMemory(item: MemoryItem) {
       window.dispatchEvent(new CustomEvent(MEMORY_UPDATE_EVENT, { detail: updatedMemory }));
     }
   }).catch(e => console.error(e)));
-
-  // Defer cloud sync so it doesn't block processing
-  if (auth.currentUser && (item.status === 'completed' || item.status === 'error')) {
-     // Non-blocking sync call
-     syncLocalToFirestore(auth.currentUser.uid).catch(console.error);
-  }
 }
 
 export async function getMemory(): Promise<MemoryItem[]> {
@@ -239,7 +233,19 @@ export async function getBatches(): Promise<Batch[]> {
   return (await get<Batch[]>(BATCHES_KEY)) || [];
 }
 
-export function subscribeToBatches(userId: string | null, callback: (items: Batch[]) => void) {
+export async function getCloudBatches(userId: string): Promise<Batch[]> {
+  const path = `users/${userId}/batches`;
+  const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(30));
+  try {
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data() as Batch);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
+  }
+}
+
+export function subscribeToBatches(userId: string | null, callback: (items: Batch[]) => void, onError?: (error: any) => void) {
   if (typeof window === 'undefined') return () => {};
   
   const localHandler = (e: any) => {
@@ -256,7 +262,12 @@ export function subscribeToBatches(userId: string | null, callback: (items: Batc
       callback(items);
     }, (error) => {
       if (error.code === 'cancelled') return;
-      console.error("Firestore batch subscription failed:", error);
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (e: any) {
+        if (onError) onError(e);
+        console.warn("Batch subscription error:", e.message);
+      }
     });
   } else {
     getBatches().then(callback);
@@ -318,6 +329,18 @@ export async function getFullMemoryItem(id: string): Promise<MemoryItem | null> 
   return localItem || null;
 }
 
+export async function getCloudMemory(userId: string): Promise<MemoryItem[]> {
+  const path = `users/${userId}/enhancements`;
+  const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(50));
+  try {
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data() as MemoryItem);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
+  }
+}
+
 export function subscribeToMemory(userId: string, callback: (items: MemoryItem[]) => void, onError?: (error: any) => void) {
   const path = `users/${userId}/enhancements`;
   const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(50));
@@ -325,13 +348,15 @@ export function subscribeToMemory(userId: string, callback: (items: MemoryItem[]
   return onSnapshot(q, (snapshot) => {
     get<MemoryItem[]>(MEMORY_KEY).then(localMemory => {
       const cloudItems = snapshot.docs.map(doc => doc.data() as MemoryItem);
-      const localMemoryMap = new Map((localMemory || []).map(item => [item.id, item]));
+      const cloudIds = new Set(cloudItems.map(i => i.id));
       
-      const enrichedItems = cloudItems.map(cloudItem => {
+      const localMemoryArray = localMemory || [];
+      const localMemoryMap = new Map(localMemoryArray.map(item => [item.id, item]));
+      
+      // Combine cloud items with local-only items
+      const enrichedCloudItems = cloudItems.map(cloudItem => {
          const localMatch = localMemoryMap.get(cloudItem.id);
          if (localMatch) {
-            // ONLY merge thumbnails and metadata, NOT large base64 images
-            // This prevents React state from exploding in size
             return {
                ...cloudItem,
                originalThumbnail: localMatch.originalThumbnail || cloudItem.originalThumbnail,
@@ -340,7 +365,13 @@ export function subscribeToMemory(userId: string, callback: (items: MemoryItem[]
          }
          return cloudItem;
       });
-      callback(enrichedItems);
+
+      const localOnlyItems = localMemoryArray.filter(item => !cloudIds.has(item.id));
+      
+      // Merge and sort by timestamp
+      const allItems = [...enrichedCloudItems, ...localOnlyItems].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      
+      callback(allItems.slice(0, 100));
     }).catch(() => {
       const cloudItems = snapshot.docs.map(doc => doc.data() as MemoryItem);
       callback(cloudItems);
@@ -437,6 +468,18 @@ export async function deleteFavoritePrompt(id: string) {
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
     }
+  }
+}
+
+export async function getCloudFavorites(userId: string): Promise<FavoritePrompt[]> {
+  const path = `users/${userId}/favorites`;
+  const q = query(collection(db, path), orderBy('timestamp', 'desc'));
+  try {
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data() as FavoritePrompt);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
   }
 }
 

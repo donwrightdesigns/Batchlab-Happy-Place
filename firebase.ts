@@ -20,11 +20,12 @@ async function testConnection() {
     await getDocFromServer(doc(db, 'test', 'connection'));
     console.log("Firestore connection successful.");
   } catch (error: any) {
+    // Gracefully handle initial offline / connecting state
     const message = error?.message || String(error);
-    if (message.includes('the client is offline')) {
-      console.warn("Please check your Firebase configuration. The client appears to be offline.");
+    if (message.includes('unavailable') || message.includes('offline')) {
+      console.log("Firestore initial connection status: offline or connecting.");
     } else {
-      console.warn("Firebase connection error:", message);
+      console.warn("Firebase connection notice:", message);
     }
   }
 }

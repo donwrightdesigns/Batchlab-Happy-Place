@@ -15,8 +15,7 @@ import {
   Volume2,
   VolumeX
 } from 'lucide-react';
-import { ai, MODELS } from '@/lib/gemini';
-import { GenerateContentResponse, LiveServerMessage, Modality, Type } from '@google/genai';
+import { MODELS } from '@/lib/gemini';
 
 interface Message {
   id: string;
@@ -61,53 +60,15 @@ export default function Chatbot({ uploadedImages, onUpdatePrompt, onProcessBatch
   }, [messages]);
 
   const initChat = useCallback(() => {
-    if (!ai) return;
-    chatRef.current = ai.chats.create({
-      model: MODELS.TEXT,
-      config: {
-        systemInstruction: `You are a real estate photo consultant. You help users decide how to enhance their photos. 
-        You have access to the following uploaded images: ${uploadedImages.map(img => img.name).join(', ')}.
-        Be professional, helpful, and concise. 
-        
-        CRITICAL: You have the ability to update the user's enhancement prompt and start the beautification process.
-        If the user agrees to a suggestion or asks you to "apply" something, use the 'update_enhancement_prompt' tool.
-        If they want to start the process, use 'start_beautification'.`,
-        tools: [{
-          functionDeclarations: [
-            {
-              name: "update_enhancement_prompt",
-              description: "Updates the main enhancement prompt with a new descriptive instruction.",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  new_prompt: {
-                    type: Type.STRING,
-                    description: "The full text of the new enhancement prompt (e.g., 'Enhance lighting, add blue sky, and stage the living room with modern furniture')."
-                  }
-                },
-                required: ["new_prompt"]
-              }
-            },
-            {
-              name: "start_beautification",
-              description: "Triggers the batch beautification process for all uploaded images.",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {}
-              }
-            }
-          ]
-        }]
-      }
-    });
-  }, [uploadedImages]);
+    // Client-side direct SDK chat is disabled. Using server-side proxy instead.
+  }, []);
 
   useEffect(() => {
     initChat();
   }, [initChat]);
 
   const handleSend = async () => {
-    if (!input.trim() || !chatRef.current || isLoading) return;
+    if (!input.trim() || isLoading) return;
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -117,71 +78,31 @@ export default function Chatbot({ uploadedImages, onUpdatePrompt, onProcessBatch
     };
 
     setMessages(prev => [...prev, userMsg]);
+    const currentInput = input;
     setInput('');
     setIsLoading(true);
 
     try {
-      let response = await chatRef.current.sendMessage({ message: input });
-      
-      // Handle function calls
-      const toolCalls = response.candidates?.[0]?.content?.parts?.filter((p: any) => p.functionCall);
-      
-      if (toolCalls && toolCalls.length > 0) {
-        const functionResponses = [];
-        
-        for (const call of toolCalls) {
-          const { name, args } = call.functionCall;
-          console.log(`AI calling function: ${name}`, args);
-          
-          if (name === "update_enhancement_prompt") {
-            onUpdatePrompt(args.new_prompt);
-            functionResponses.push({
-              functionResponse: {
-                name,
-                response: { success: true, message: "Prompt updated successfully." }
-              }
-            });
-            
-            setMessages(prev => [...prev, {
-              id: Date.now().toString(),
-              role: 'assistant',
-              content: `I've updated the enhancement prompt to: "${args.new_prompt}"`,
-              type: 'text'
-            }]);
-          } else if (name === "start_beautification") {
-            onProcessBatch();
-            functionResponses.push({
-              functionResponse: {
-                name,
-                response: { success: true, message: "Beautification process started." }
-              }
-            });
-            
-            setMessages(prev => [...prev, {
-              id: Date.now().toString(),
-              role: 'assistant',
-              content: "I've started the beautification process for you!",
-              type: 'text'
-            }]);
-          }
-        }
-        
-        // Send function responses back to get a final text response if needed
-        if (functionResponses.length > 0) {
-          response = await chatRef.current.sendMessage({
-            message: functionResponses
-          });
-        }
-      }
+      // Proxy through server endpoint /api/chat
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...messages, userMsg],
+          uploadedImages
+        })
+      });
 
-      if (response.text) {
-        const assistantMsg: Message = {
+      if (!res.ok) throw new Error('Chat request failed');
+      const data = await res.json();
+      
+      if (data.text) {
+        setMessages(prev => [...prev, {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: response.text,
+          content: data.text,
           type: 'text'
-        };
-        setMessages(prev => [...prev, assistantMsg]);
+        }]);
       }
     } catch (error) {
       console.error('Chat error:', error);
@@ -190,76 +111,9 @@ export default function Chatbot({ uploadedImages, onUpdatePrompt, onProcessBatch
     }
   };
 
-  // Live API (Voice) Logic
+  // Live API (Voice) Logic - Requires server-side implementation.
   const startLiveMode = async () => {
-    if (!ai) return;
-    
-    try {
-      setIsLiveMode(true);
-      setIsListening(true);
-      
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
-      processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
-      
-      const sessionPromise = ai.live.connect({
-        model: MODELS.LIVE,
-        callbacks: {
-          onopen: () => {
-            console.log('Live session opened');
-            sourceRef.current?.connect(processorRef.current!);
-            processorRef.current?.connect(audioContextRef.current!.destination);
-            
-            processorRef.current!.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const pcmData = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) {
-                pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-              }
-              const base64Data = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
-              
-              liveSessionRef.current?.sendRealtimeInput({
-                audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
-              });
-            };
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio) {
-              playAudio(base64Audio);
-            }
-            
-            if (message.serverContent?.modelTurn?.parts?.[0]?.text) {
-              const text = message.serverContent.modelTurn.parts[0].text;
-              setMessages(prev => {
-                const last = prev[prev.length - 1];
-                if (last && last.role === 'assistant' && last.type === 'voice') {
-                  return [...prev.slice(0, -1), { ...last, content: last.content + ' ' + text }];
-                }
-                return [...prev, { id: Date.now().toString(), role: 'assistant', content: text, type: 'voice' }];
-              });
-            }
-          },
-          onclose: () => stopLiveMode(),
-          onerror: (err) => console.error('Live error:', err)
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
-          },
-          systemInstruction: "You are a real estate photo consultant. Talk to the user about their photos. Be helpful and concise."
-        }
-      });
-      
-      liveSessionRef.current = await sessionPromise;
-      
-    } catch (error) {
-      console.error('Failed to start live mode:', error);
-      stopLiveMode();
-    }
+    alert("Voice Mode requires server-side configuration. This feature is currently disabled in the preview.");
   };
 
   const stopLiveMode = () => {
