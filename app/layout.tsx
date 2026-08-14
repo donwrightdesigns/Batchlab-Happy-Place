@@ -13,8 +13,8 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: 'REBE w/ Memory',
-  description: 'Real Estate Batch Enhancer with Memory and Light Theme',
+  title: 'BatchLab Photo Engine',
+  description: 'Batch Image Processing & Enhancement Engine with Memory and AI Studio',
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {

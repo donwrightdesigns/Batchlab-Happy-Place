@@ -22,13 +22,13 @@ export async function POST(req: NextRequest) {
       ? `Uploaded images: ${uploadedImages.map((img: any) => img.name).join(', ')}.`
       : 'No images uploaded yet.';
 
-    const systemInstruction = `You are a real estate photo consultant. You help users decide how to enhance their photos. 
+    const systemInstruction = `You are a professional photography and image processing consultant. You help users decide how to enhance and edit their photos across diverse photographic styles. 
     ${imageContext}
     Be professional, helpful, and concise.
     If the user asks to enhance, beautify, or change settings, provide clear advice and suggest specific prompt enhancements.`;
 
     const chat = genAI.chats.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.7-flash",
       config: { systemInstruction }
     });
 

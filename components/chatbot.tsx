@@ -36,7 +36,7 @@ export default function Chatbot({ uploadedImages, onUpdatePrompt, onProcessBatch
     {
       id: '1',
       role: 'assistant',
-      content: 'Hi! I can help you discuss your real estate photos and I can even update the enhancement prompt for you. Just tell me what you want to change!',
+      content: 'Hi! I can help you analyze your photos, refine your enhancement prompts, or tune processing parameters. Just tell me what you want to achieve!',
       type: 'text'
     }
   ]);

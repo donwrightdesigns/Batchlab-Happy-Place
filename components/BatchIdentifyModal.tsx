@@ -55,12 +55,12 @@ export const BatchIdentifyModal: React.FC<BatchIdentifyModalProps> = ({
                     <MapPin size={24} />
                   </div>
                   <h2 className="font-display font-black text-4xl tracking-tighter uppercase leading-tight">IDENTIFY BATCH</h2>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">GROUP THESE {pendingImagesCount} PHOTOS UNDER A PROPERTY ADDRESS OR COLLECTION NAME.</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">GROUP THESE {pendingImagesCount} PHOTOS UNDER A BATCH OR COLLECTION NAME.</p>
                 </div>
 
                 <div className="space-y-4">
                   <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 block">Property Address</label>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 block">Batch / Collection Name</label>
                     <input 
                       autoFocus
                       type="text"
@@ -72,7 +72,7 @@ export const BatchIdentifyModal: React.FC<BatchIdentifyModalProps> = ({
                         }
                       }}
                       className="w-full p-4 rounded-2xl bg-gray-50 border border-gray-100 focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm font-medium transition-all"
-                      placeholder="e.g. 742 Evergreen Terrace..."
+                      placeholder="e.g. Summer Portfolio, Studio Shoot, Project Alpha..."
                     />
                   </div>
 

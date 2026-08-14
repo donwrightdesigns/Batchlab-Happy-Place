@@ -15,7 +15,7 @@
     },
     "Enhancement": {
       "title": "Enhancement",
-      "description": "A processed real estate photo record",
+      "description": "A processed photo enhancement record",
       "type": "object",
       "properties": {
         "id": { "type": "string" },

@@ -455,8 +455,8 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="text-center space-y-4 max-w-md">
-                <h1 className="font-display font-black text-6xl tracking-tighter uppercase leading-[0.85] text-black">REAL ESTATE<br/><span className="text-accent">ENHANCER</span></h1>
-                <p className="text-xs text-text-muted font-medium leading-relaxed px-8">High-fidelity photographic retouching powered by Gemini AI. Upload property photos to begin batch processing.</p>
+                <h1 className="font-display font-black text-6xl tracking-tighter uppercase leading-[0.85] text-black">IMAGE<br/><span className="text-accent">ENHANCER</span></h1>
+                <p className="text-xs text-text-muted font-medium leading-relaxed px-8">High-fidelity photographic retouching and batch enhancement powered by Gemini AI. Upload your photos to begin processing.</p>
                 <div className="pt-4 flex justify-center">
                    <button className="px-10 py-4 bg-black text-white rounded-full text-[11px] font-black uppercase tracking-[0.2em] hover:bg-accent transition-all shadow-2xl">Select Files</button>
                 </div>
@@ -836,7 +836,7 @@ export default function Dashboard() {
                         Creative
                       </button>
                       <button 
-                        onClick={() => setSystemInstruction("You are a master real estate photography editor. produce a high-end luxury aesthetic: &apos;Daylight Airy, Diffused Natural Light&apos;. Maintain exact architectural geometry and vertical perspective.")}
+                        onClick={() => setSystemInstruction("You are a master professional photography editor. Produce commercial studio-grade clarity, balanced dynamic range, rich natural colors, and crisp details across any photo subject.")}
                         className="text-[8px] font-black text-gray-400 uppercase hover:text-accent transition-colors"
                       >
                         Minimal

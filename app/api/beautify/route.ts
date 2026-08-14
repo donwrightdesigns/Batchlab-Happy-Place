@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
 
     // Construct a clean prompt string
     const cleanPrompt = prompt ? prompt.trim() : "";
-    const finalUserPrompt = cleanPrompt || "Enhance this real estate photo with professional studio-grade quality. Improve lighting balance, correct vertical alignments, boost clarity, and ensure vibrant yet natural colors.";
+    const finalUserPrompt = cleanPrompt || "Enhance this photo with professional studio-grade quality. Optimize lighting balance, expand dynamic range, boost sharpness and clarity, and ensure vibrant yet natural colors.";
 
     const parts = isEditMode && base64Data ? [
       {

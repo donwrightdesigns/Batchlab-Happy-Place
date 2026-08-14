@@ -17,7 +17,7 @@ export const MODELS = {
   IMAGE_GEN_HQ: "gemini-3.1-flash-image",
   
   // Text Models (2026 Model Garden)
-  TEXT: "gemini-3.6-flash",
+  TEXT: "gemini-3.7-flash",
   TEXT_PRO: "gemini-3.1-pro-preview",
   TEXT_LITE: "gemini-3.1-flash-lite",
 

@@ -1,6 +1,6 @@
 {
   "name": "Batchlab Photo Engine BW",
-  "description": "Professional Real Estate Batch Enhancement Engine with AI Analysis, archived work sessions, and deep prompt customization. Powered by Gemini 3.1 Flash Image.",
+  "description": "Professional Batch Image Processing & Enhancement Engine with AI Analysis, archived work sessions, and deep prompt customization. Powered by Gemini 3.1 Flash Image.",
   "requestFramePermissions": [
     "microphone"
   ],

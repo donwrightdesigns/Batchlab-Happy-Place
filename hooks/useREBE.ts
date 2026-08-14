@@ -64,7 +64,7 @@ export function useREBE() {
     setIsMounted(true);
   }, []);
 
-  const [prompt, setPrompt] = useState('Professional real estate enhancement: daylight conversion with bright airy atmosphere, clean blue skies, perfectly balanced window exposures, and crisp vertical corrections.');
+  const [prompt, setPrompt] = useState('Professional photo enhancement: studio-grade clarity, balanced dynamic range, rich natural colors, crisp details, clean noise reduction, and optimal exposure.');
   const [resolution, setResolution] = useState<ImageResolution>('2K');
   const [aspectRatio, setAspectRatio] = useState<any>('auto');
   const model: ImageModel = 'nano-2';
@@ -89,7 +89,7 @@ export function useREBE() {
   const [mediaType, setMediaType] = useState<MediaType>('image');
   const [veoOption, setVeoOption] = useState<VeoOption>('lite');
   const [imageModelOption, setImageModelOption] = useState<ImageModelOption>('flash');
-  const [systemInstruction, setSystemInstruction] = useState("You are a master real estate photography editor. Your goal is to produce a high-end luxury aesthetic: 'Daylight Airy, Diffused Natural Light'. \n\nCRITICAL CONSTRAINTS:\n1. Maintain exact architectural geometry and vertical perspective. \n2. Balance interior shadows with natural exterior window light (no blown-out windows).\n3. Correct white balance to remove orange/yellow color casts from indoor bulbs.\n4. Enhance clarity and micro-contrast for a crisp, professional look.\n5. DO NOT add or remove furniture, alter floor plans, or change structural elements.\n6. Ensure blue, natural skies if windows are visible.\n\nOutput only the high-quality edited image.");
+  const [systemInstruction, setSystemInstruction] = useState("You are a master professional photography editor. Your goal is to produce high-end commercial quality enhancements across diverse subjects (portraits, landscapes, architecture, street, products, and studio photos).\n\nCRITICAL CONSTRAINTS:\n1. Preserve natural textures, sharpness, and original subject identity without artificial artifacts.\n2. Balance highlights, midtones, and shadows for an optimal dynamic range.\n3. Correct color casts and white balance while maintaining authentic tones and vibrant colors.\n4. Enhance micro-contrast, edge sharpness, and clarity.\n5. Clean up noise and compression artifacts seamlessly.\n6. Follow the user's specific creative direction and instructions faithfully.\n\nOutput only the high-quality edited image.");
   const [favorites, setFavorites] = useState<FavoritePrompt[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [showRecentPrompts, setShowRecentPrompts] = useState(false);
