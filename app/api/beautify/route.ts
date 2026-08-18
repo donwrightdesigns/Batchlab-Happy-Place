@@ -124,15 +124,13 @@ export async function POST(req: NextRequest) {
     ];
 
     const config: any = {};
-    const imageConfig: any = {};
-    if (resolution && selectedModel !== "gemini-3.1-flash-lite-image") {
-      imageConfig.imageSize = resolution;
-    }
     if (aspectRatio && aspectRatio !== 'auto') {
-      imageConfig.aspectRatio = aspectRatio;
+      config.imageConfig = { aspectRatio };
     }
-    if (Object.keys(imageConfig).length > 0) {
-      config.imageConfig = imageConfig;
+
+    // Set native systemInstruction inside config where the GenAI SDK expects it
+    if (systemInstruction && systemInstruction.trim().length > 0) {
+      config.systemInstruction = systemInstruction.trim();
     }
 
     const generationParams: any = {
@@ -140,11 +138,6 @@ export async function POST(req: NextRequest) {
       contents: parts,
       config,
     };
-
-    // Use native systemInstruction if available and meaningful
-    if (systemInstruction && systemInstruction.trim().length > 5) {
-      generationParams.systemInstruction = systemInstruction.trim();
-    }
 
     const result = await genAI.models.generateContent(generationParams);
 
