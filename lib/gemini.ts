@@ -17,7 +17,7 @@ export const MODELS = {
   IMAGE_GEN_HQ: "gemini-3.1-flash-image",
   
   // Text Models (2026 Model Garden)
-  TEXT: "gemini-3.7-flash",
+  TEXT: "gemini-3.8-flash",
   TEXT_PRO: "gemini-3.1-pro-preview",
   TEXT_LITE: "gemini-3.1-flash-lite",
 
@@ -39,6 +39,15 @@ export type ProcessingTier = "standard" | "flex" | "batch";
 export type OperationMode = 'edit' | 'create';
 export type MediaType = 'image' | 'video';
 
+export interface CharacterContextImage {
+  id: string;
+  name?: string;
+  label?: string;
+  base64: string;
+  mimeType?: string;
+  enabled?: boolean;
+}
+
 export async function beautifyImage(
   base64Image: string, 
   prompt: string, 
@@ -51,6 +60,7 @@ export async function beautifyImage(
   mediaType: MediaType = 'image',
   veoOption: VeoOption = 'lite',
   imageModelOption: ImageModelOption = 'flash',
+  characterContextImages?: CharacterContextImage[],
   retries = 3
 ) {
   if (typeof window !== 'undefined') {
@@ -69,71 +79,82 @@ export async function beautifyImage(
       }
     }
 
-    const res = await fetch('/api/beautify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        base64Data,
-        mimeType,
-        prompt,
-        resolution,
-        model: modelName,
-        aspectRatio,
-        systemInstruction,
-        tier,
-        opMode,
-        mediaType,
-        veoOption,
-        imageModelOption
-      })
-    });
+    let lastError: any = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        if (attempt > 0) {
+          // Exponential backoff with jitter
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 800, 8000);
+          await new Promise(r => setTimeout(r, delay));
+        }
 
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || `HTTP error! status: ${res.status}`);
-    }
-
-    const data = await res.json();
-    if (data.pending && data.operationName) {
-      // If server-side polling timed out, we continue here
-      let attempts = 0;
-      while (attempts < 20) {
-        await new Promise(r => setTimeout(r, 5000));
-        const statusRes = await fetch('/api/video-status', {
+        const res = await fetch('/api/beautify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operationName: data.operationName })
+          body: JSON.stringify({
+            base64Data,
+            mimeType,
+            prompt,
+            resolution,
+            model: modelName,
+            aspectRatio,
+            systemInstruction,
+            tier,
+            opMode,
+            mediaType,
+            veoOption,
+            imageModelOption,
+            characterContextImages: characterContextImages?.filter(c => c && (c.base64 || (c as any).base64Data) && c.enabled !== false)
+          })
         });
-        if (statusRes.ok) {
-          const statusData = await statusRes.json();
-          if (statusData.done && statusData.response?.generatedVideos?.[0]?.video?.uri) {
-             // Re-beautify might return a base64 from the server eventually if we polled there
-             // but here we just need to handle the case where it finally finishes.
-             // Actually, the server /api/beautify returns the base64. 
-             // Let's assume we need to wait and then re-request or the status API gives us the URI.
-             // If we have a URI, we can't easily fetch it from client due to CORS unless proxied.
-             // For now, let's just return a placeholder or throw a retry error if not easily handled.
-             // Better: /api/beautify should return base64 if it finishes.
-             // If we are here, it means we need to poll /api/video-status.
-             
-             // The URI returned by Veo is internal to Google. We need to proxy the download.
-             // Let's add a /api/video-download endpoint or similar.
-             const downloadRes = await fetch('/api/video-download', {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/json' },
-               body: JSON.stringify({ uri: statusData.response.generatedVideos[0].video.uri })
-             });
-             if (downloadRes.ok) {
-               const downloadData = await downloadRes.json();
-               return downloadData.base64;
-             }
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          const errMsg = errorData.error || `HTTP error! status: ${res.status}`;
+          // If it's a rate limit or 5xx server glitch, allow retry
+          if (res.status === 429 || res.status >= 500 || errMsg.includes('overloaded') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+            lastError = new Error(errMsg);
+            continue;
           }
+          throw new Error(errMsg);
         }
-        attempts++;
+
+        const data = await res.json();
+        if (data.pending && data.operationName) {
+          // If server-side polling timed out, continue polling on client
+          let attempts = 0;
+          while (attempts < 20) {
+            await new Promise(r => setTimeout(r, 5000));
+            const statusRes = await fetch('/api/video-status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ operationName: data.operationName })
+            });
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.done && statusData.response?.generatedVideos?.[0]?.video?.uri) {
+                 const downloadRes = await fetch('/api/video-download', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ uri: statusData.response.generatedVideos[0].video.uri })
+                 });
+                 if (downloadRes.ok) {
+                   const downloadData = await downloadRes.json();
+                   return downloadData.base64;
+                 }
+              }
+            }
+            attempts++;
+          }
+          throw new Error("Video generation timed out. Please check batch history in a moment.");
+        }
+        return data.base64;
+      } catch (err: any) {
+        lastError = err;
+        if (attempt === retries) throw err;
       }
-      throw new Error("Video generation is taking longer than expected. Please check your history in a few minutes.");
     }
-    return data.base64;
+    throw lastError || new Error("Failed after retries");
   }
 
   if (!ai) throw new Error("AI not initialized on server");
@@ -167,3 +188,23 @@ export async function analyzeImage(base64Image: string) {
   if (!ai) throw new Error("AI not initialized on server");
   throw new Error("SDK calls should be proxied through API routes context");
 }
+
+export async function improvePrompt(rawPrompt: string, mode: 'create' | 'edit' = 'create', category: string = 'general'): Promise<string> {
+  if (typeof window !== 'undefined') {
+    const res = await fetch('/api/improve-prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: rawPrompt, mode, category })
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || `HTTP error! status: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.improvedPrompt || rawPrompt;
+  }
+  return rawPrompt;
+}
+

@@ -4,13 +4,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   beautifyImage, 
   analyzeImage, 
+  improvePrompt,
   ImageResolution, 
   ImageModel, 
   ProcessingTier, 
   OperationMode, 
   MediaType, 
   VeoOption, 
-  ImageModelOption 
+  ImageModelOption,
+  CharacterContextImage
 } from '@/lib/gemini';
 import { 
   saveToMemory, 
@@ -30,7 +32,10 @@ import {
   getSystemInstruction,
   Batch,
   saveBatch,
-  subscribeToBatches
+  subscribeToBatches,
+  isQuotaExceededCached,
+  setQuotaExceededCached,
+  QUOTA_EXCEEDED_EVENT
 } from '@/lib/memory';
 import { auth, onAuthStateChanged, User, signInWithPopup, googleProvider, GoogleAuthProvider, signOut } from '@/firebase';
 import { setDriveToken, getDriveToken } from '@/lib/drive';
@@ -42,7 +47,7 @@ export interface ImageFile {
   id: string;
   file: File;
   preview: string;
-  status: 'idle' | 'processing' | 'completed' | 'error';
+  status: 'idle' | 'queued' | 'processing' | 'completed' | 'error';
   result?: string;
   resultPreview?: string;
   error?: string;
@@ -54,6 +59,29 @@ export interface ImageFile {
   memoryId?: string;
   mediaType?: MediaType;
   reprocessPrompt?: string;
+  title?: string;
+  textOverlay?: string;
+  concept?: string;
+}
+
+export interface QueueJob {
+  taskId: string;
+  imageId: string;
+  type: 'enhance' | 'create' | 'refine';
+  prompt: string;
+  systemInstruction?: string;
+  resolution: ImageResolution;
+  aspectRatio: any;
+  tier: ProcessingTier;
+  opMode: OperationMode;
+  mediaType: MediaType;
+  veoOption: VeoOption;
+  imageModelOption: ImageModelOption;
+  sourceType?: 'original' | 'result';
+  sourceBase64?: string;
+  title?: string;
+  textOverlay?: string;
+  concept?: string;
 }
 
 export function useREBE() {
@@ -77,11 +105,21 @@ export function useREBE() {
   const [refineSource, setRefineSource] = useState<'original' | 'result'>('original');
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(() => isQuotaExceededCached());
   const [lastQuotaCheck, setLastQuotaCheck] = useState(0);
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [showQuotaBanner, setShowQuotaBanner] = useState(true);
   const [hasDismissedQuotaBanner, setHasDismissedQuotaBanner] = useState(false);
+
+  // Sync quota exceeded state from memory event
+  useEffect(() => {
+    const handleQuota = () => {
+      setIsQuotaExceeded(true);
+      if (!hasDismissedQuotaBanner) setShowQuotaBanner(true);
+    };
+    window.addEventListener(QUOTA_EXCEEDED_EVENT, handleQuota);
+    return () => window.removeEventListener(QUOTA_EXCEEDED_EVENT, handleQuota);
+  }, [hasDismissedQuotaBanner]);
   const [concurrencyLimit, setConcurrencyLimit] = useState(3);
   const [isBatchMode, setIsBatchMode] = useState(true);
   const [tier, setTier] = useState<ProcessingTier>('flex');
@@ -107,6 +145,47 @@ export function useREBE() {
   const [propertyAddress, setPropertyAddress] = useState('');
   const [historyTab, setHistoryTab] = useState<'edits' | 'batches'>('batches');
   const [showAddressPrompt, setShowAddressPrompt] = useState(false);
+  const [showBatchPromptModal, setShowBatchPromptModal] = useState(false);
+  const [showCharacterDrawer, setShowCharacterDrawer] = useState(false);
+  const [characterContextImages, setCharacterContextImages] = useState<CharacterContextImage[]>([]);
+  const [characterContextEnabled, setCharacterContextEnabled] = useState(true);
+  const [characterName, setCharacterName] = useState('');
+  const [characterNotes, setCharacterNotes] = useState('');
+
+  // Load Character Context from LocalStorage on mount
+  useEffect(() => {
+    try {
+      const savedContext = localStorage.getItem('rebe_character_context_v1');
+      if (savedContext) {
+        const parsed = JSON.parse(savedContext);
+        if (Array.isArray(parsed)) {
+          setCharacterContextImages(parsed.slice(0, 4));
+        }
+      }
+      const savedEnabled = localStorage.getItem('rebe_character_enabled_v1');
+      if (savedEnabled !== null) {
+        setCharacterContextEnabled(savedEnabled === 'true');
+      }
+      const savedName = localStorage.getItem('rebe_character_name_v1');
+      if (savedName) setCharacterName(savedName);
+      const savedNotes = localStorage.getItem('rebe_character_notes_v1');
+      if (savedNotes) setCharacterNotes(savedNotes);
+    } catch (e) {
+      console.warn("Failed to load character context from localStorage:", e);
+    }
+  }, []);
+
+  // Save Character Context to LocalStorage on change
+  useEffect(() => {
+    try {
+      localStorage.setItem('rebe_character_context_v1', JSON.stringify(characterContextImages));
+      localStorage.setItem('rebe_character_enabled_v1', characterContextEnabled ? 'true' : 'false');
+      localStorage.setItem('rebe_character_name_v1', characterName);
+      localStorage.setItem('rebe_character_notes_v1', characterNotes);
+    } catch (e) {
+      console.warn("Failed to save character context to localStorage:", e);
+    }
+  }, [characterContextImages, characterContextEnabled, characterName, characterNotes]);
   const [showNamingFavorite, setShowNamingFavorite] = useState(false);
   const [namingFavoriteType, setNamingFavoriteType] = useState<'recent' | 'manual'>('recent');
   const [favoriteName, setFavoriteName] = useState('');
@@ -245,6 +324,7 @@ export function useREBE() {
 
   const handleRetrySync = useCallback(() => {
     setIsRetryingSync(true);
+    setQuotaExceededCached(false);
     setIsQuotaExceeded(false);
     setHasDismissedQuotaBanner(false);
     setShowQuotaBanner(true);
@@ -350,6 +430,16 @@ export function useREBE() {
     }
   }, [images, handleAnalyze]);
 
+  const handleAnalyzeSelected = useCallback(async (selectedIds: string[]) => {
+    if (!selectedIds || selectedIds.length === 0) return;
+    const imagesToAnalyze = images.filter(img => selectedIds.includes(img.id) && !img.analysis && !img.isAnalyzing);
+    if (imagesToAnalyze.length === 0) return;
+
+    for (const img of imagesToAnalyze) {
+      await handleAnalyze(img.id);
+    }
+  }, [images, handleAnalyze]);
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newImages = acceptedFiles.map(file => ({
       id: crypto.randomUUID(),
@@ -365,11 +455,7 @@ export function useREBE() {
     } else {
       setImages(prev => [...prev, ...newImages]);
     }
-
-    if (autoAnalyzeOnUpload) {
-      newImages.forEach(img => handleAnalyze(img.id));
-    }
-  }, [images.length, autoAnalyzeOnUpload, handleAnalyze]);
+  }, [images.length]);
 
   const removeImage = (id: string) => {
     const imgToRemove = images.find(img => img.id === id);
@@ -380,191 +466,272 @@ export function useREBE() {
     if (selectedImage?.id === id) setSelectedImage(null);
   };
 
-  const processBatch = useCallback(async () => {
-    if (images.length === 0 || isProcessing) return;
-    setIsProcessing(true);
-    setProcessedCount(0);
-    
-    const imagesToProcess = images.filter(img => img.status !== 'completed');
-    if (imagesToProcess.length === 0) {
-      setIsProcessing(false);
-      return;
+  // Asynchronous Task Queue state and worker management
+  const queueRef = useRef<QueueJob[]>([]);
+  const activeWorkersRef = useRef<number>(0);
+
+  const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
+
+  const handleImprovePrompt = useCallback(async (
+    inputPrompt: string, 
+    mode: 'create' | 'edit' = 'create', 
+    category: string = 'general'
+  ): Promise<string> => {
+    if (!inputPrompt || !inputPrompt.trim()) return inputPrompt;
+    setIsImprovingPrompt(true);
+    try {
+      const improved = await improvePrompt(inputPrompt, mode, category);
+      return improved;
+    } catch (e) {
+      console.error("Failed to improve prompt:", e);
+      return inputPrompt;
+    } finally {
+      setIsImprovingPrompt(false);
     }
-    setTotalToProcess(imagesToProcess.length);
+  }, []);
 
-    const processImage = async (img: ImageFile) => {
-      if (img.status === 'completed') return img;
+  const runQueue = useCallback(async () => {
+    if (queueRef.current.length === 0) return;
 
-      const logId = addNetworkLog('Image Generation', `Processing ${img.file.name}...`);
-      const memoryId = crypto.randomUUID();
-      const originalBase64 = await fileToBase64(img.file);
-      
-      const currentPrompt = img.reprocessPrompt || prompt;
-      
-      await saveToMemory({
-        id: memoryId,
-        timestamp: Date.now(),
-        prompt: currentPrompt,
-        systemInstruction,
-        status: 'pending',
-        originalImage: originalBase64,
-        settings: { prompt: currentPrompt, resolution, model, aspectRatio }
-      });
+    while (activeWorkersRef.current < concurrencyLimit && queueRef.current.length > 0) {
+      const job = queueRef.current.shift();
+      if (!job) break;
 
-      const hasAnalysis = currentPrompt.includes("### ANALYSIS RECOMMENDATIONS:");
-      setImages(prev => prev.map(i => i.id === img.id ? { 
-        ...i, 
-        status: 'processing',
-        usedAnalysis: hasAnalysis,
-        finalPrompt: currentPrompt
-      } : i));
+      activeWorkersRef.current++;
 
-      try {
-        if (isBatchMode) {
-          await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
-        }
-
-        const result = await beautifyImage(
-          originalBase64, 
-          currentPrompt, 
-          resolution, 
-          model, 
-          aspectRatio, 
-          systemInstruction, 
-          tier,
-          opMode,
-          mediaType,
-          veoOption,
-          imageModelOption
+      // Launch async worker for this individual job
+      (async (currentJob: QueueJob) => {
+        const targetId = currentJob.imageId;
+        const logId = addNetworkLog(
+          currentJob.type === 'create' ? 'Prompt Generation' : 'Image Enhancement',
+          `Processing ${currentJob.title || 'photo'}...`
         );
-        
-        let finalResult = result;
-        if (mediaType === 'image') {
-          try {
-            const exifObj = piexif.load(originalBase64);
-            const exifStr = piexif.dump(exifObj);
-            finalResult = piexif.insert(exifStr, result);
-          } catch (e) {
-            console.warn("Could not transfer EXIF data:", e);
-          }
-        }
 
-        const updatedImg: ImageFile = {
-          ...img,
-          status: 'completed',
-          resultPreview: await dataUrlToBlobUrl(finalResult),
-          memoryId,
-          mediaType
-        };
+        // Update image status to 'processing'
+        setImages(prev => prev.map(img => 
+          img.id === targetId ? { 
+            ...img, 
+            status: 'processing', 
+            finalPrompt: currentJob.prompt,
+            error: undefined 
+          } : img
+        ));
+        setSelectedImage(prev => prev && prev.id === targetId ? { ...prev, status: 'processing', finalPrompt: currentJob.prompt, error: undefined } : prev);
 
-        setProcessedCount(prev => prev + 1);
-
-        await saveToMemory({
-          id: memoryId,
-          timestamp: Date.now(),
-          prompt,
-          systemInstruction,
-          status: 'completed',
-          originalImage: originalBase64,
-          editedImage: finalResult,
-          settings: { prompt, resolution, model, aspectRatio }
-        });
-
-        if (user) debouncedSync(user.uid);
-
-        updateNetworkLog(logId, 'success', `Successfully processed ${img.file.name}`);
-        setImages(prev => prev.map(i => i.id === img.id ? updatedImg : i));
-        return updatedImg;
-      } catch (error: any) {
-        console.error(error);
-        const errorMsg = error.message || 'Failed to process';
-        
-        await saveToMemory({
-          id: memoryId,
-          timestamp: Date.now(),
-          prompt,
-          status: 'error',
-          error: errorMsg,
-          originalImage: originalBase64,
-          settings: { prompt, resolution, model }
-        });
-
-        if (user) debouncedSync(user.uid);
-
-        updateNetworkLog(logId, 'error', `Failed ${img.file.name}: ${errorMsg}`);
-        setProcessedCount(prev => prev + 1);
-        
-        const errorImg: ImageFile = {
-          ...img,
-          status: 'error',
-          error: errorMsg
-        };
-        setImages(prev => prev.map(i => i.id === img.id ? errorImg : i));
-        return errorImg;
-      }
-    };
-
-    const successfullyProcessed: ImageFile[] = [];
-    let queueIndex = 0;
-    const getNextImage = () => {
-      if (queueIndex < imagesToProcess.length) {
-        return imagesToProcess[queueIndex++];
-      }
-      return null;
-    };
-
-    const workerCount = Math.min(concurrencyLimit, imagesToProcess.length);
-    const workers = Array(workerCount).fill(null).map(async (_, index) => {
-      await new Promise(resolve => setTimeout(resolve, index * 600));
-      while (true) {
-        const img = getNextImage();
-        if (!img) break;
         try {
-          const updatedImg = await processImage(img);
-          if (updatedImg?.status === 'completed') {
-            successfullyProcessed.push(updatedImg);
+          const memoryId = crypto.randomUUID();
+          let base64 = currentJob.sourceBase64 || "";
+
+          if (currentJob.type !== 'create' && !base64) {
+            const currentImg = imagesRef.current.find(i => i.id === targetId);
+            if (currentJob.sourceType === 'result' && currentImg?.memoryId) {
+              const fullItem = await getFullMemoryItem(currentImg.memoryId);
+              base64 = fullItem?.editedImage || (currentImg.file ? await fileToBase64(currentImg.file) : "");
+            } else if (currentImg?.file) {
+              base64 = await fileToBase64(currentImg.file);
+            }
           }
-        } catch (err) {
-          console.error("Worker error processing image:", err);
-        }
-      }
-    });
-    await Promise.all(workers);
 
-    const batchImages = successfullyProcessed;
-    if (batchImages.length > 0) {
-      const timestamp = Date.now();
-      const defaultTitle = `Batch - ${new Date(timestamp).toLocaleDateString()} ${new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-      
-      const batchThumbnails: string[] = [];
-      const localMemory = await getMemory();
-      for (const img of batchImages.slice(0, 4)) {
-        const memoryMatch = localMemory.find(m => m.id === (img.memoryId || img.id));
-        if (memoryMatch?.editedThumbnail) {
-          batchThumbnails.push(memoryMatch.editedThumbnail);
-        } else if (img.resultPreview) {
-          batchThumbnails.push(img.resultPreview);
-        }
-      }
+          const activeContext = characterContextEnabled 
+            ? (characterContextImages || []).filter(c => c && (c.base64 || (c as any).base64Data) && c.enabled !== false) 
+            : [];
 
-      await saveBatch({
-        id: crypto.randomUUID(),
-        timestamp,
-        imageIds: batchImages.map(img => img.memoryId || img.id),
-        thumbnails: batchThumbnails,
-        title: propertyAddress.trim() || defaultTitle,
-        address: propertyAddress.trim() || undefined,
-        prompt,
-        systemInstruction,
-        tags: ['enhanced']
-      });
-      if (batchImages.length === images.length) {
-        setPropertyAddress(''); 
-      }
+          const isCreateMode = currentJob.type === 'create' || currentJob.opMode === 'create' || !base64;
+
+          const result = await beautifyImage(
+            base64,
+            currentJob.prompt,
+            currentJob.resolution,
+            'nano-2',
+            currentJob.aspectRatio,
+            currentJob.systemInstruction,
+            currentJob.tier,
+            isCreateMode ? 'create' : 'edit',
+            currentJob.mediaType,
+            currentJob.veoOption,
+            currentJob.imageModelOption,
+            activeContext
+          );
+
+          let finalResult = result;
+          if (base64 && currentJob.mediaType === 'image') {
+            try {
+              const exifObj = piexif.load(base64);
+              const exifStr = piexif.dump(exifObj);
+              finalResult = piexif.insert(exifStr, result);
+            } catch (e) {
+              console.warn("Could not transfer EXIF data:", e);
+            }
+          }
+
+          const blobUrl = await dataUrlToBlobUrl(finalResult);
+          
+          const existingImg = imagesRef.current.find(i => i.id === targetId);
+          const updatedImg: ImageFile = {
+            ...(existingImg || {
+              id: targetId,
+              file: new File([], (currentJob.title || 'generated') + '.png', { type: 'image/png' }),
+              preview: blobUrl,
+            }),
+            id: targetId,
+            status: 'completed',
+            finalPrompt: currentJob.prompt,
+            resultPreview: blobUrl,
+            result: finalResult,
+            memoryId,
+            mediaType: currentJob.mediaType
+          };
+
+          setImages(prev => prev.map(img => img.id === targetId ? updatedImg : img));
+          
+          // Non-blocking & zero focus hijacking: only update selectedImage IF user is still viewing this exact image
+          setSelectedImage(prev => prev && prev.id === targetId ? updatedImg : prev);
+          setProcessedCount(prev => prev + 1);
+
+          await saveToMemory({
+            id: memoryId,
+            timestamp: Date.now(),
+            prompt: currentJob.prompt,
+            title: currentJob.title,
+            textOverlay: currentJob.textOverlay,
+            concept: currentJob.concept,
+            systemInstruction: currentJob.systemInstruction,
+            status: 'completed',
+            originalImage: base64,
+            editedImage: finalResult,
+            settings: { prompt: currentJob.prompt, resolution: currentJob.resolution, model, aspectRatio: currentJob.aspectRatio }
+          });
+
+          if (user) debouncedSync(user.uid);
+          updateNetworkLog(logId, 'success', `Successfully processed ${currentJob.title || 'item'}`);
+
+        } catch (err: any) {
+          console.error("Queue task error for image:", targetId, err);
+          const errMsg = err.message || 'Processing failed';
+          
+          setImages(prev => prev.map(img => 
+            img.id === targetId ? { ...img, status: 'error', error: errMsg } : img
+          ));
+          setSelectedImage(prev => prev && prev.id === targetId ? { ...prev, status: 'error', error: errMsg } : prev);
+          updateNetworkLog(logId, 'error', `Failed ${currentJob.title || 'item'}: ${errMsg}`);
+        } finally {
+          activeWorkersRef.current--;
+          runQueue();
+        }
+      })(job);
     }
+  }, [concurrencyLimit, characterContextEnabled, characterContextImages, fileToBase64, dataUrlToBlobUrl, user, debouncedSync, addNetworkLog, updateNetworkLog]);
 
-    setIsProcessing(false);
-  }, [images, isProcessing, prompt, resolution, model, aspectRatio, fileToBase64, concurrencyLimit, systemInstruction, isBatchMode, propertyAddress, tier, opMode, mediaType, veoOption, imageModelOption, addNetworkLog, updateNetworkLog, dataUrlToBlobUrl, user, debouncedSync]);
+  const enqueueJobs = useCallback((jobs: QueueJob[]) => {
+    if (jobs.length === 0) return;
+    queueRef.current.push(...jobs);
+    setTotalToProcess(prev => prev + jobs.length);
+    runQueue();
+  }, [runQueue]);
+
+  const processBatch = useCallback(async (selectedIds?: string[]) => {
+    const targetImages = images.filter(img => 
+      selectedIds && selectedIds.length > 0 
+        ? selectedIds.includes(img.id) && img.status !== 'processing' && img.status !== 'queued'
+        : img.status !== 'completed' && img.status !== 'processing' && img.status !== 'queued'
+    );
+    if (targetImages.length === 0) return;
+
+    // Immediately mark target images as queued in UI
+    setImages(prev => prev.map(img => 
+      targetImages.some(t => t.id === img.id) ? { ...img, status: 'queued', error: undefined } : img
+    ));
+
+    const jobs: QueueJob[] = targetImages.map(img => ({
+      taskId: crypto.randomUUID(),
+      imageId: img.id,
+      type: 'enhance',
+      prompt: img.reprocessPrompt || prompt,
+      systemInstruction,
+      resolution,
+      aspectRatio,
+      tier,
+      opMode: 'edit',
+      mediaType: img.mediaType || mediaType,
+      veoOption,
+      imageModelOption,
+      title: img.title || img.file.name,
+      textOverlay: img.textOverlay,
+      concept: img.concept
+    }));
+
+    enqueueJobs(jobs);
+  }, [images, prompt, systemInstruction, resolution, aspectRatio, tier, mediaType, veoOption, imageModelOption, enqueueJobs]);
+
+  const generateBatchPrompts = useCallback(async (
+    items: Array<{ id?: string; title?: string; concept?: string; visualPrompt: string; textOverlay?: string; aspectRatio?: any }>,
+    batchTitle: string = "Batch Generation"
+  ) => {
+    if (items.length === 0) return;
+
+    const newImageFiles: ImageFile[] = items.map((item, index) => {
+      const id = item.id || `prompt-gen-${Date.now()}-${index}`;
+      const safeTitle = (item.title || `Prompt ${index + 1}`).replace(/[<>&"]/g, '');
+      const safeOverlay = (item.textOverlay || '').replace(/[<>&"]/g, '');
+      const svgData = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="800" height="600" fill="#18181b"/><text x="400" y="270" font-family="sans-serif" font-size="26" font-weight="900" fill="#ffffff" text-anchor="middle">${safeTitle}</text><text x="400" y="315" font-family="sans-serif" font-size="15" fill="#a1a1aa" text-anchor="middle">Queued in Task Queue</text>${safeOverlay ? `<text x="400" y="360" font-family="sans-serif" font-size="13" fill="#fbbf24" text-anchor="middle">"${safeOverlay.slice(0, 48)}..."</text>` : ''}</svg>`;
+      const blob = new Blob([svgData], { type: 'image/svg+xml' });
+      const dummyFile = new File([blob], `${item.title || `prompt_${index + 1}`}.png`, { type: 'image/png' });
+      const previewUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgData)}`;
+
+      return {
+        id,
+        file: dummyFile,
+        preview: previewUrl,
+        status: 'queued' as const,
+        finalPrompt: item.visualPrompt,
+        reprocessPrompt: item.visualPrompt,
+        title: item.title || `Prompt ${index + 1}`,
+        textOverlay: item.textOverlay,
+        concept: item.concept || batchTitle,
+        mediaType: 'image' as const
+      };
+    });
+
+    setImages(prev => [...prev, ...newImageFiles]);
+
+    const jobs: QueueJob[] = newImageFiles.map((img, idx) => ({
+      taskId: crypto.randomUUID(),
+      imageId: img.id,
+      type: 'create',
+      prompt: items[idx].visualPrompt,
+      systemInstruction,
+      resolution,
+      aspectRatio: items[idx].aspectRatio || aspectRatio || '1:1',
+      tier,
+      opMode: 'create',
+      mediaType: 'image',
+      veoOption,
+      imageModelOption,
+      title: img.title,
+      textOverlay: img.textOverlay,
+      concept: img.concept
+    }));
+
+    enqueueJobs(jobs);
+  }, [aspectRatio, resolution, systemInstruction, tier, veoOption, imageModelOption, enqueueJobs]);
+
+  const generateTextToImage = useCallback(async (count: number = 1, customPrompt?: string, targetRatio?: any) => {
+    const promptToUse = (customPrompt || prompt).trim();
+    if (!promptToUse) return;
+
+    const items = Array.from({ length: Math.max(1, Math.min(count, 8)) }, (_, i) => ({
+      title: count > 1 ? `Creation ${i + 1}` : 'Generative Creation',
+      visualPrompt: promptToUse,
+      concept: 'Text-to-Image Creation',
+      aspectRatio: targetRatio || aspectRatio
+    }));
+
+    const title = count > 1 
+      ? `Text-to-Image Batch (${count}) - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : `Text-to-Image Creation - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+    await generateBatchPrompts(items, title);
+  }, [prompt, aspectRatio, generateBatchPrompts]);
 
   const setReprocessPrompt = useCallback((prompt: string, imgId?: string) => {
     const id = imgId || selectedImage?.id;
@@ -575,22 +742,29 @@ export function useREBE() {
     }
   }, [selectedImage]);
 
-  const reprocessSingle = useCallback(async (createNewVariation: boolean = false) => {
-    if (!selectedImage || selectedImage.status === 'processing') return;
-    
-    const currentPrompt = selectedImage.reprocessPrompt || prompt;
-    const hasAnalysis = currentPrompt.includes("### ANALYSIS RECOMMENDATIONS:");
-    const newId = crypto.randomUUID();
-    const targetId = createNewVariation ? newId : selectedImage.id;
+  const reprocessSingle = useCallback(async (
+    createNewVariation: boolean = false,
+    imgId?: string,
+    customPrompt?: string
+  ) => {
+    const targetId = imgId || selectedImage?.id;
+    if (!targetId) return;
+
+    const targetImg = imagesRef.current.find(i => i.id === targetId) || (selectedImage?.id === targetId ? selectedImage : null);
+    if (!targetImg) return;
+
+    const currentPrompt = customPrompt || targetImg.reprocessPrompt || targetImg.finalPrompt || prompt;
+    const finalTargetId = createNewVariation ? crypto.randomUUID() : targetId;
 
     if (createNewVariation) {
       const newImg: ImageFile = {
-        ...selectedImage,
-        id: targetId,
-        status: 'processing',
-        usedAnalysis: hasAnalysis,
+        ...targetImg,
+        id: finalTargetId,
+        status: 'queued',
         finalPrompt: currentPrompt,
+        reprocessPrompt: currentPrompt,
         resultPreview: undefined,
+        result: undefined,
         analysis: undefined,
         memoryId: undefined
       };
@@ -598,85 +772,51 @@ export function useREBE() {
       setSelectedImage(newImg);
     } else {
       setImages(prev => prev.map(img => 
-        img.id === targetId ? { 
+        img.id === finalTargetId ? { 
           ...img, 
-          status: 'processing',
-          usedAnalysis: hasAnalysis,
-          finalPrompt: currentPrompt
+          status: 'queued', 
+          finalPrompt: currentPrompt,
+          error: undefined
         } : img
       ));
+      setSelectedImage(prev => prev && prev.id === finalTargetId ? { ...prev, status: 'queued', finalPrompt: currentPrompt, error: undefined } : prev);
     }
 
-    try {
-      let base64: string;
-      if (refineSource === 'result' && selectedImage.memoryId) {
-        const fullItem = await getFullMemoryItem(selectedImage.memoryId);
-        if (fullItem?.editedImage) {
-          base64 = fullItem.editedImage;
-        } else {
-          base64 = await fileToBase64(selectedImage.file);
-        }
-      } else {
-        base64 = await fileToBase64(selectedImage.file);
-      }
+    const isCreateMode = opMode === 'create' || !targetImg.file || targetImg.file.name.endsWith('.svg') || (targetImg.preview && targetImg.preview.startsWith('data:image/svg'));
 
-      const result = await beautifyImage(
-        base64, 
-        currentPrompt, 
-        resolution, 
-        model, 
-        aspectRatio, 
-        systemInstruction, 
-        tier,
-        opMode,
-        mediaType,
-        veoOption,
-        imageModelOption
-      );
-      
-      let finalResult = result;
-      try {
-        const exifObj = piexif.load(base64);
-        const exifStr = piexif.dump(exifObj);
-        finalResult = piexif.insert(exifStr, result);
-      } catch (e) {
-        console.warn("Could not transfer EXIF data:", e);
-      }
+    const job: QueueJob = {
+      taskId: crypto.randomUUID(),
+      imageId: finalTargetId,
+      type: isCreateMode ? 'create' : 'refine',
+      prompt: currentPrompt,
+      systemInstruction,
+      resolution,
+      aspectRatio,
+      tier,
+      opMode: isCreateMode ? 'create' : 'edit',
+      mediaType: targetImg.mediaType || mediaType,
+      veoOption,
+      imageModelOption,
+      sourceType: refineSource,
+      title: targetImg.title,
+      textOverlay: targetImg.textOverlay,
+      concept: targetImg.concept
+    };
 
-      const memoryId = crypto.randomUUID();
-      const updatedImg: ImageFile = {
-        ...selectedImage,
-        id: targetId,
-        status: 'completed',
-        usedAnalysis: hasAnalysis,
-        finalPrompt: currentPrompt,
-        resultPreview: await dataUrlToBlobUrl(finalResult),
-        memoryId,
-        mediaType
-      };
-      
-      setImages(prev => prev.map(img => img.id === targetId ? updatedImg : img));
-      setSelectedImage(updatedImg);
-      
-      await saveToMemory({
-        id: memoryId,
-        timestamp: Date.now(),
-        prompt: currentPrompt,
-        systemInstruction,
-        originalImage: base64,
-        editedImage: result,
-        settings: { prompt: currentPrompt, resolution, model }
-      });
-      
-      if (user) debouncedSync(user.uid);
-      
-    } catch (error) {
-      console.error(error);
-      setImages(prev => prev.map(img => 
-        img.id === targetId ? { ...img, status: 'error', error: 'Failed to re-process' } : img
-      ));
-    }
-  }, [selectedImage, prompt, refineSource, resolution, model, aspectRatio, fileToBase64, systemInstruction, tier, opMode, mediaType, veoOption, imageModelOption, dataUrlToBlobUrl, user, debouncedSync]);
+    enqueueJobs([job]);
+  }, [selectedImage, prompt, systemInstruction, resolution, aspectRatio, tier, opMode, mediaType, veoOption, imageModelOption, refineSource, enqueueJobs]);
+
+  const cancelTask = useCallback((imageId: string) => {
+    queueRef.current = queueRef.current.filter(j => j.imageId !== imageId);
+    setImages(prev => prev.map(img => img.id === imageId && img.status === 'queued' ? { ...img, status: 'idle' } : img));
+    setSelectedImage(prev => prev && prev.id === imageId && prev.status === 'queued' ? { ...prev, status: 'idle' } : prev);
+  }, []);
+
+  const retryTask = useCallback((imageId: string) => {
+    const img = imagesRef.current.find(i => i.id === imageId);
+    if (!img) return;
+    reprocessSingle(false, imageId);
+  }, [reprocessSingle]);
 
   const downloadAll = async () => {
     const zip = new JSZip();
@@ -752,7 +892,11 @@ export function useREBE() {
     resolution, setResolution,
     aspectRatio, setAspectRatio,
     suffix, setSuffix,
-    isProcessing,
+    isProcessing: images.some(i => i.status === 'processing' || i.status === 'queued'),
+    activeTasksCount: images.filter(i => i.status === 'processing').length,
+    queuedTasksCount: images.filter(i => i.status === 'queued').length,
+    cancelTask,
+    retryTask,
     memory, setMemory,
     showMemory, setShowMemory,
     showSettings, setShowSettings,
@@ -793,6 +937,12 @@ export function useREBE() {
     propertyAddress, setPropertyAddress,
     historyTab, setHistoryTab,
     showAddressPrompt, setShowAddressPrompt,
+    showBatchPromptModal, setShowBatchPromptModal,
+    showCharacterDrawer, setShowCharacterDrawer,
+    characterContextImages, setCharacterContextImages,
+    characterContextEnabled, setCharacterContextEnabled,
+    characterName, setCharacterName,
+    characterNotes, setCharacterNotes,
     showNamingFavorite, setShowNamingFavorite,
     favoriteName, setFavoriteName,
     pendingFavoritePrompt, setPendingFavoritePrompt,
@@ -811,10 +961,15 @@ export function useREBE() {
     goToPreviousImage,
     handleAnalyze,
     handleAnalyzeAll,
+    handleAnalyzeSelected,
     onDrop,
     removeImage,
     processBatch,
+    generateBatchPrompts,
+    generateTextToImage,
     reprocessSingle,
+    handleImprovePrompt,
+    isImprovingPrompt,
     downloadAll,
     downloadBatch,
     handleSaveFavorite,

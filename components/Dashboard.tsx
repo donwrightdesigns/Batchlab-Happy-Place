@@ -32,7 +32,10 @@ import {
   MapPin,
   RefreshCw,
   MessageSquare,
-  Zap
+  Zap,
+  Check,
+  FileText,
+  User
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { saveAs } from 'file-saver';
@@ -44,6 +47,8 @@ import { HistorySidebar } from '@/components/HistorySidebar';
 import { ImageDetailModal } from '@/components/ImageDetailModal';
 import { BatchIdentifyModal } from '@/components/BatchIdentifyModal';
 import { FavoriteNamingModal } from '@/components/FavoriteNamingModal';
+import { BatchPromptModal } from '@/components/BatchPromptModal';
+import { CharacterContextDrawer } from '@/components/CharacterContextDrawer';
 import { useREBE } from '@/hooks/useREBE';
 
 export default function Dashboard() {
@@ -72,6 +77,11 @@ export default function Dashboard() {
     veoOption, setVeoOption,
     galleryFilter, setGalleryFilter,
     showSettingsDrawer, setShowSettingsDrawer,
+    showCharacterDrawer, setShowCharacterDrawer,
+    characterContextImages, setCharacterContextImages,
+    characterContextEnabled, setCharacterContextEnabled,
+    characterName, setCharacterName,
+    characterNotes, setCharacterNotes,
     showSlider, setShowSlider,
     analysisResult,
     isAnalyzing,
@@ -79,6 +89,7 @@ export default function Dashboard() {
     propertyAddress, setPropertyAddress,
     historyTab, setHistoryTab,
     showAddressPrompt, setShowAddressPrompt,
+    showBatchPromptModal, setShowBatchPromptModal,
     showNamingFavorite, setShowNamingFavorite,
     favoriteName, setFavoriteName,
     pendingFavoritePrompt,
@@ -92,10 +103,16 @@ export default function Dashboard() {
     goToPreviousImage,
     handleAnalyze,
     handleAnalyzeAll,
+    handleAnalyzeSelected,
     onDrop,
     removeImage,
     processBatch,
+    generateBatchPrompts,
+    generateTextToImage,
     reprocessSingle,
+    handleImprovePrompt,
+    isImprovingPrompt,
+    opMode, setOpMode,
     downloadAll,
     downloadBatch,
     handleSaveFavorite,
@@ -111,10 +128,20 @@ export default function Dashboard() {
     filteredImages,
     showFavorites, setShowFavorites,
     showRecentPrompts, setShowRecentPrompts,
-    autoAnalyzeOnUpload, setAutoAnalyzeOnUpload,
-    showPromptPreview, setShowPromptPreview,
     cycleResolution
   } = useREBE();
+
+  const [selectedImageIds, setSelectedImageIds] = React.useState<string[]>([]);
+  const [createCount, setCreateCount] = React.useState<number>(1);
+
+  React.useEffect(() => {
+    setSelectedImageIds(prev => prev.filter(id => images.some(img => img.id === id)));
+  }, [images]);
+
+  const toggleSelectImage = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedImageIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -141,6 +168,10 @@ export default function Dashboard() {
         setShowMemory={setShowMemory}
         showSettingsDrawer={showSettingsDrawer}
         setShowSettingsDrawer={setShowSettingsDrawer}
+        showCharacterDrawer={showCharacterDrawer}
+        setShowCharacterDrawer={setShowCharacterDrawer}
+        characterContextCount={characterContextImages.filter(img => img.enabled !== false).length}
+        characterContextEnabled={characterContextEnabled}
         isProcessing={isProcessing}
         processedCount={processedCount}
         totalToProcess={totalToProcess}
@@ -156,20 +187,47 @@ export default function Dashboard() {
 
       <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Left Panel: Controls */}
-        <div className="w-full lg:w-80 border-r border-border bg-white p-6 flex flex-col gap-6 overflow-y-auto">
+        <div className="w-full lg:w-80 border-r border-border bg-white p-6 flex flex-col gap-5 overflow-y-auto">
+          {/* Mode Switcher: Retouch vs Text-to-Image Creation */}
           <section>
-            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted mb-3 block">Media Target</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Workflow Mode</label>
+              <span className="text-[9px] font-bold text-accent uppercase tracking-wider">
+                {opMode === 'create' ? 'Generative AI' : 'Retouch & Edit'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 p-1 bg-gray-100 rounded-2xl border border-border">
+              <button 
+                onClick={() => setOpMode('edit')}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${opMode === 'edit' ? 'bg-white text-black shadow-xs border border-border' : 'text-gray-400 hover:text-black'}`}
+              >
+                <Edit3 size={13} />
+                <span>Edit Photo</span>
+              </button>
+              <button 
+                onClick={() => setOpMode('create')}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${opMode === 'create' ? 'bg-white text-black shadow-xs border border-border' : 'text-gray-400 hover:text-black'}`}
+              >
+                <Sparkles size={13} className="text-accent" />
+                <span>Text-to-Image</span>
+              </button>
+            </div>
+          </section>
+
+          {/* Media Target: Photos vs Video */}
+          <section>
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted mb-2 block">Media Target</label>
             <div className="grid grid-cols-2 p-1 bg-gray-50 rounded-2xl border border-border">
               <button 
                 onClick={() => setMediaType('image')}
-                className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mediaType === 'image' ? 'bg-white text-black shadow-sm border border-border' : 'text-gray-400 hover:text-black'}`}
+                className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${mediaType === 'image' ? 'bg-white text-black shadow-xs border border-border' : 'text-gray-400 hover:text-black'}`}
               >
                 <ImageIcon size={14} />
                 <span>Photos</span>
               </button>
               <button 
                 onClick={() => setMediaType('video')}
-                className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mediaType === 'video' ? 'bg-white text-black shadow-sm border border-border' : 'text-gray-400 hover:text-black'}`}
+                className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${mediaType === 'video' ? 'bg-white text-black shadow-xs border border-border' : 'text-gray-400 hover:text-black'}`}
               >
                 <Video size={14} />
                 <span>Video</span>
@@ -177,10 +235,51 @@ export default function Dashboard() {
             </div>
           </section>
 
+          {/* Batch Ingest Shortcut */}
           <section>
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-xs font-bold uppercase tracking-widest text-text-muted">Enhancement Prompt</label>
-              <div className="flex gap-1">
+            <button
+              onClick={() => setShowBatchPromptModal(true)}
+              className="w-full px-3.5 py-2.5 bg-neutral-900 hover:bg-black text-white rounded-2xl flex items-center justify-between transition-all group shadow-xs cursor-pointer border border-neutral-800"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="p-1.5 bg-white/10 text-white rounded-xl group-hover:scale-110 transition-transform">
+                  <FileText size={13} />
+                </span>
+                <div className="text-left">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-white">Batch Ingest Doc</p>
+                  <p className="text-[8px] text-gray-400 font-bold uppercase tracking-tight">Paste Multi-Slide Prompts</p>
+                </div>
+              </div>
+              <span className="text-[9px] font-black text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                Batch Mode
+              </span>
+            </button>
+          </section>
+
+          {/* Prompt Section with Mode-Agnostic Polish Tool */}
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-text-muted">
+                {opMode === 'create' ? 'Text Prompt (Creation)' : 'Enhancement Prompt'}
+              </label>
+              
+              <div className="flex items-center gap-1">
+                {/* Mode Agnostic Polish Tool */}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!prompt.trim() || isImprovingPrompt) return;
+                    const enhanced = await handleImprovePrompt(prompt, opMode);
+                    setPrompt(enhanced);
+                  }}
+                  disabled={isImprovingPrompt || !prompt.trim()}
+                  className="px-2 py-1 bg-accent/10 hover:bg-accent/20 text-accent disabled:opacity-40 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer"
+                  title="Improve Prompt with AI"
+                >
+                  {isImprovingPrompt ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                  <span>{isImprovingPrompt ? 'Polishing...' : 'Polish'}</span>
+                </button>
+
                 <button
                   onClick={() => {
                     setShowRecentPrompts(!showRecentPrompts);
@@ -189,7 +288,7 @@ export default function Dashboard() {
                   className={`p-1.5 rounded-md transition-all ${showRecentPrompts ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-400'}`}
                   title="Recent Prompts"
                 >
-                  <Clock className="w-4 h-4" />
+                  <Clock className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => {
@@ -199,7 +298,7 @@ export default function Dashboard() {
                   className={`p-1.5 rounded-md transition-all ${showFavorites ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-400'}`}
                   title="Favorite Prompts"
                 >
-                  <Star className="w-4 h-4" />
+                  <Star className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
@@ -208,15 +307,16 @@ export default function Dashboard() {
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your enhancement..."
-                className="w-full h-32 bg-bg border border-border rounded-2xl p-4 text-sm resize-none focus:border-accent focus:ring-1 focus:ring-accent transition-all font-sans leading-relaxed shadow-sm"
+                placeholder={opMode === 'create' ? "Describe the image you want to create from scratch..." : "Describe your enhancement..."}
+                className="w-full h-28 bg-bg border border-border rounded-2xl p-3.5 text-xs resize-none focus:border-accent focus:ring-1 focus:ring-accent transition-all font-sans leading-relaxed shadow-xs"
               />
-              <div className="absolute bottom-3 right-3 flex gap-2">
+              <div className="absolute bottom-2.5 right-2.5 flex gap-1">
                 <button
                   onClick={() => setPrompt('')}
-                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors"
+                  className="p-1 hover:bg-gray-100 rounded text-gray-400 transition-colors"
+                  title="Clear text"
                 >
-                  <X size={14} />
+                  <X size={13} />
                 </button>
               </div>
 
@@ -287,34 +387,80 @@ export default function Dashboard() {
             </div>
           </section>
 
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-widest text-text-muted">Frame Format</label>
-              <div className="flex items-center gap-1 text-[10px] font-black text-gray-400 uppercase">
-                <Maximize2 size={10} />
-                <span>Aspect</span>
+          {/* Unified Formatting, Resolution & Priority Tier Region */}
+          <section className="p-4 bg-gray-50/80 rounded-2xl border border-border space-y-4">
+            <div className="flex items-center justify-between border-b border-border/60 pb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-black flex items-center gap-1.5">
+                <Settings size={12} className="text-gray-400" />
+                Format & Output Quality
+              </span>
+              <span className="text-[9px] font-mono text-gray-400">{resolution} • {aspectRatio}</span>
+            </div>
+
+            {/* Frame Format (Aspect Ratio) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[9px] font-black uppercase tracking-widest text-text-muted">Frame Aspect</label>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(['auto', '1:1', '16:9', '9:16'] as const).map((ratio) => (
+                  <button 
+                    key={ratio}
+                    onClick={() => setAspectRatio(ratio)}
+                    className={`py-2 px-1 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${aspectRatio === ratio ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
+                  >
+                    {ratio === 'auto' ? 'Auto' : ratio === '1:1' ? '1:1' : ratio === '16:9' ? '16:9' : '9:16'}
+                  </button>
+                ))}
               </div>
             </div>
-            
-            <div className="grid grid-cols-3 gap-2">
-              <button 
-                onClick={() => setAspectRatio('auto')}
-                className={`py-3 px-1 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${aspectRatio === 'auto' ? 'bg-black text-white border-black shadow-lg shadow-black/10' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
-              >
-                Auto
-              </button>
-              <button 
-                onClick={() => setAspectRatio('1:1')}
-                className={`py-3 px-1 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${aspectRatio === '1:1' ? 'bg-black text-white border-black shadow-lg shadow-black/10' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
-              >
-                Square
-              </button>
-              <button 
-                onClick={() => setAspectRatio('16:9')}
-                className={`py-3 px-1 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${aspectRatio === '16:9' ? 'bg-black text-white border-black shadow-lg shadow-black/10' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
-              >
-                16:9
-              </button>
+
+            {/* Resolution Selector */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[9px] font-black uppercase tracking-widest text-text-muted">Resolution</label>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(['1K', '2K', '4K'] as const).map((res) => (
+                  <button
+                    key={res}
+                    onClick={() => setResolution(res)}
+                    className={`py-2 px-1 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${resolution === res ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
+                  >
+                    {res}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Priority Mode / Processing Tier */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[9px] font-black uppercase tracking-widest text-text-muted">Priority Tier</label>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  onClick={() => setTier('flex')}
+                  className={`py-2 px-1 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${tier === 'flex' ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
+                  title="Flex Processing: Cost-effective high quality"
+                >
+                  Flex
+                </button>
+                <button
+                  onClick={() => setTier('standard')}
+                  className={`py-2 px-1 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${tier === 'standard' ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
+                  title="Standard Processing: Real-time generation"
+                >
+                  Standard
+                </button>
+                <button
+                  onClick={() => setTier('batch')}
+                  className={`py-2 px-1 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${tier === 'batch' ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
+                  title="Batch Processing: Optimized for multiple simultaneous items"
+                >
+                  Batch
+                </button>
+              </div>
             </div>
 
             <AnimatePresence>
@@ -323,15 +469,15 @@ export default function Dashboard() {
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  className="space-y-3 overflow-hidden"
+                  className="space-y-2 overflow-hidden pt-1 border-t border-border/60"
                 >
-                  <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Video Speed/Quality</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <label className="text-[9px] font-black uppercase tracking-[0.2em] text-text-muted">Video Quality</label>
+                  <div className="grid grid-cols-3 gap-1.5">
                     {(['lite', 'fast', 'normal'] as const).map((style) => (
                       <button
                         key={style}
                         onClick={() => setVeoOption(style)}
-                        className={`py-2 px-3 rounded-lg border text-[9px] font-black uppercase tracking-widest transition-all ${veoOption === style ? 'bg-black text-white border-black shadow-md' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
+                        className={`py-1.5 px-2 rounded-lg border text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${veoOption === style ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
                       >
                         {style}
                       </button>
@@ -340,99 +486,64 @@ export default function Dashboard() {
                 </motion.div>
               )}
             </AnimatePresence>
-
-            <button
-              onClick={() => setShowPromptPreview(!showPromptPreview)}
-              className={`w-full p-4 rounded-2xl border border-dashed flex items-center justify-between group transition-all ${systemInstruction.length > 0 ? 'bg-blue-50/50 border-blue-200' : 'bg-gray-50 border-border hover:bg-gray-100'}`}
-            >
-              <div className="flex items-center gap-3">
-                <Terminal size={16} className={systemInstruction.length > 0 ? 'text-blue-500' : 'text-gray-500'} />
-                <div className="text-left">
-                  <span className={`text-[10px] font-black uppercase tracking-widest block ${systemInstruction.length > 0 ? 'text-blue-600' : 'text-gray-500'}`}>Master AI Overlay</span>
-                  <span className="text-[8px] text-gray-400 font-bold uppercase tracking-wider">{systemInstruction.length > 0 ? 'Overlay Active' : 'No Active Overlay'}</span>
-                </div>
-              </div>
-              <ChevronRight size={14} className={`text-gray-400 transition-transform ${showPromptPreview ? 'rotate-90' : ''}`} />
-            </button>
-
-            <AnimatePresence>
-              {showPromptPreview && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="p-4 bg-gray-50 rounded-2xl border border-border mt-2 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black text-text-muted uppercase tracking-widest">Global Constraints</span>
-                      <button 
-                        onClick={() => setSystemInstruction('')}
-                        className="text-[8px] font-black text-red-500 uppercase hover:underline"
-                      >
-                        Clear All
-                      </button>
-                    </div>
-                    <textarea 
-                      value={systemInstruction}
-                      onChange={(e) => setSystemInstruction(e.target.value)}
-                      placeholder="Add system-level constraints here... Warning: Long overlays can dilute your primary prompt."
-                      className="w-full h-40 bg-white p-3 rounded-xl border border-border text-[10px] font-mono text-gray-600 leading-relaxed outline-none resize-none focus:border-blue-300 transition-all"
-                    />
-                    <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider leading-relaxed">
-                      This text is sent as a background instruction. If your edits feel &quot;diluted&quot;, try clearing this area.
-                    </p>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </section>
 
-          <div className="mt-auto space-y-4">
-            <section className="p-4 bg-accent/5 rounded-2xl border border-accent/20">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-black text-accent uppercase tracking-widest">Step 1: Pre-Process</span>
-                <Search size={14} className="text-accent" />
+          {/* Action Button Section */}
+          <div className="mt-auto space-y-3">
+            {opMode === 'create' || images.length === 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[9px] font-bold text-gray-500 uppercase px-1">
+                  <span>Variations</span>
+                  <div className="flex gap-1">
+                    {[1, 2, 4].map((count) => (
+                      <button
+                        key={count}
+                        onClick={() => setCreateCount(count)}
+                        className={`px-2 py-0.5 rounded text-[9px] font-black transition-all cursor-pointer ${createCount === count ? 'bg-black text-white' : 'bg-gray-100 text-gray-500 hover:text-black'}`}
+                      >
+                        {count}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => generateTextToImage(createCount)}
+                  disabled={!prompt.trim() || isProcessing}
+                  className="w-full bg-accent hover:bg-accent-hover disabled:bg-gray-200 disabled:text-gray-400 text-white font-black uppercase tracking-[0.2em] text-xs py-4 rounded-2xl transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-3 group relative overflow-hidden cursor-pointer"
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="animate-spin" size={16} />
+                      <span>Creating ({createCount})...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} className="group-hover:scale-110 transition-transform" />
+                      <span>Generate {createCount > 1 ? `${createCount} Images` : 'New Image'}</span>
+                    </>
+                  )}
+                </button>
               </div>
+            ) : (
               <button
-                onClick={handleAnalyzeAll}
-                disabled={images.length === 0 || images.every(img => img.analysis) || isProcessing}
-                className="w-full py-4 bg-white hover:bg-gray-50 disabled:bg-gray-50 text-black border border-accent/30 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                onClick={() => processBatch()}
+                disabled={images.length === 0 || isProcessing}
+                className="w-full bg-accent hover:bg-accent-hover disabled:bg-gray-200 disabled:text-gray-400 text-white font-black uppercase tracking-[0.2em] text-xs py-4 rounded-2xl transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-3 group relative overflow-hidden cursor-pointer"
               >
-                {images.some(img => img.isAnalyzing) ? (
+                {isProcessing ? (
                   <>
-                    <Loader2 className="animate-spin" size={14} />
-                    <span>Studying Images...</span>
+                    <Loader2 className="animate-spin" size={16} />
+                    <span>Processing...</span>
                   </>
                 ) : (
                   <>
-                    <Search size={14} />
-                    <span>Analyze Full Batch</span>
+                    <Sparkles size={16} className="group-hover:scale-110 transition-transform" />
+                    <span>{mediaType === 'video' ? 'Generate Video' : `Enhance ${images.length > 0 ? `${images.length} Photos` : 'Gallery'}`}</span>
                   </>
                 )}
               </button>
-              <p className="text-[8px] text-accent/60 font-bold uppercase tracking-wider mt-2 text-center">
-                Identify flaws & generate custom fixes
-              </p>
-            </section>
-
-             <button
-              onClick={processBatch}
-              disabled={images.length === 0 || isProcessing}
-              className="w-full bg-accent hover:bg-accent-hover disabled:bg-gray-200 disabled:text-gray-400 text-white font-black uppercase tracking-[0.2em] text-xs py-5 rounded-2xl transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-3 group relative overflow-hidden"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="animate-spin" size={18} />
-                  <span>Processing...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles size={18} className="group-hover:scale-110 transition-transform" />
-                  <span>{mediaType === 'video' ? 'Generate Video' : `Enhance ${images.length > 0 ? `${images.length} Photos` : 'Gallery'}`}</span>
-                </>
-              )}
-            </button>
+            )}
             <p className="text-[9px] text-center text-text-muted font-bold uppercase tracking-widest opacity-60">High-Precision Neural Processing</p>
           </div>
         </div>
@@ -456,19 +567,52 @@ export default function Dashboard() {
               </div>
               <div className="text-center space-y-4 max-w-md">
                 <h1 className="font-display font-black text-6xl tracking-tighter uppercase leading-[0.85] text-black">IMAGE<br/><span className="text-accent">ENHANCER</span></h1>
-                <p className="text-xs text-text-muted font-medium leading-relaxed px-8">High-fidelity photographic retouching and batch enhancement powered by Gemini AI. Upload your photos to begin processing.</p>
-                <div className="pt-4 flex justify-center">
-                   <button className="px-10 py-4 bg-black text-white rounded-full text-[11px] font-black uppercase tracking-[0.2em] hover:bg-accent transition-all shadow-2xl">Select Files</button>
+                <p className="text-xs text-text-muted font-medium leading-relaxed px-8">High-fidelity photographic retouching, batch prompt ingestion, and multi-slide generation powered by Gemini AI.</p>
+                <div className="pt-4 flex flex-wrap justify-center items-center gap-3">
+                  <button 
+                    onClick={(e) => {
+                      // default dropzone click will trigger file select
+                    }}
+                    className="px-8 py-3.5 bg-black text-white rounded-full text-[11px] font-black uppercase tracking-[0.2em] hover:bg-accent transition-all shadow-xl cursor-pointer"
+                  >
+                    Select Files
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpMode('create');
+                      generateTextToImage(1);
+                    }}
+                    className="px-6 py-3.5 bg-accent text-white hover:bg-accent-hover rounded-full text-[11px] font-black uppercase tracking-[0.15em] transition-all shadow-lg shadow-accent/20 flex items-center gap-2 cursor-pointer"
+                  >
+                    <Sparkles size={14} />
+                    <span>Create from Prompt</span>
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowBatchPromptModal(true);
+                    }}
+                    className="px-6 py-3.5 bg-white hover:bg-black hover:text-white text-black border border-border rounded-full text-[11px] font-black uppercase tracking-[0.15em] transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+                  >
+                    <FileText size={14} />
+                    <span>Batch Ingest Doc</span>
+                  </button>
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex-1 flex flex-col min-w-0">
-              <div className="p-8 pb-4 flex items-center justify-between sticky top-0 bg-[#F8F9FA]/80 backdrop-blur-xl z-10">
+              <div className="p-6 sm:p-8 pb-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 bg-[#F8F9FA]/80 backdrop-blur-xl z-10">
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-3">
-                    <h2 className="font-display font-black text-4xl tracking-tighter uppercase leading-none">WORK SESSION</h2>
+                    <h2 className="font-display font-black text-3xl sm:text-4xl tracking-tighter uppercase leading-none">WORK SESSION</h2>
                     <span className="px-3 py-1 bg-black text-white text-[10px] font-black rounded-full uppercase tracking-widest">{images.length} ITEMS</span>
+                    {selectedImageIds.length > 0 && (
+                      <span className="px-2.5 py-1 bg-accent/10 text-accent border border-accent/20 text-[10px] font-black rounded-full uppercase tracking-widest">
+                        {selectedImageIds.length} SELECTED
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                     <Folder size={12} />
@@ -476,26 +620,103 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <div className="flex bg-white p-1 rounded-xl border border-border shadow-sm">
-                      {(['all', 'completed', 'processing', 'error'] as const).map((f) => (
-                        <button
-                          key={f}
-                          onClick={() => setGalleryFilter(f)}
-                          className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${galleryFilter === f ? 'bg-black text-white shadow-md' : 'text-gray-400 hover:text-black'}`}
-                        >
-                          {f}
-                        </button>
-                      ))}
+                <div className="flex items-center flex-wrap gap-3">
+                  {/* Single smaller Analyze Button */}
+                  {selectedImageIds.length > 0 ? (
+                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-border shadow-xs">
+                      <button
+                        onClick={() => handleAnalyzeSelected(selectedImageIds)}
+                        disabled={
+                          isProcessing ||
+                          images.filter(img => selectedImageIds.includes(img.id)).every(img => img.analysis) ||
+                          images.filter(img => selectedImageIds.includes(img.id)).some(img => img.isAnalyzing)
+                        }
+                        className="px-3 py-1.5 bg-black hover:bg-accent disabled:bg-gray-100 disabled:text-gray-400 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 disabled:opacity-40"
+                      >
+                        {images.filter(img => selectedImageIds.includes(img.id)).some(img => img.isAnalyzing) ? (
+                          <>
+                            <Loader2 className="animate-spin" size={11} />
+                            <span>Analyzing...</span>
+                          </>
+                        ) : images.filter(img => selectedImageIds.includes(img.id)).every(img => img.analysis) ? (
+                          <>
+                            <Check size={11} />
+                            <span>Selected Analyzed</span>
+                          </>
+                        ) : (
+                          <>
+                            <Search size={11} />
+                            <span>Analyze Selected ({selectedImageIds.length})</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setSelectedImageIds([])}
+                        className="px-2 py-1.5 text-gray-400 hover:text-black text-[9px] font-bold uppercase tracking-wider transition-colors"
+                        title="Clear Selection"
+                      >
+                        Clear
+                      </button>
                     </div>
+                  ) : (
+                    <button
+                      onClick={handleAnalyzeAll}
+                      disabled={images.length === 0 || images.every(img => img.analysis) || isProcessing || images.some(img => img.isAnalyzing)}
+                      className="px-3 py-1.5 bg-white hover:bg-black hover:text-white disabled:bg-gray-100/60 disabled:text-gray-400 text-black border border-border rounded-xl text-[9px] font-black uppercase tracking-wider transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-40"
+                    >
+                      {images.some(img => img.isAnalyzing) ? (
+                        <>
+                          <Loader2 className="animate-spin" size={11} />
+                          <span>Analyzing...</span>
+                        </>
+                      ) : images.every(img => img.analysis) && images.length > 0 ? (
+                        <>
+                          <Check size={11} className="text-accent" />
+                          <span>Batch Analyzed</span>
+                        </>
+                      ) : (
+                        <>
+                          <Search size={11} />
+                          <span>Analyze All</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Filter tabs */}
+                  <div className="flex bg-white p-1 rounded-xl border border-border shadow-xs">
+                    {(['all', 'completed', 'processing', 'error'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setGalleryFilter(f)}
+                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${galleryFilter === f ? 'bg-black text-white shadow-xs' : 'text-gray-400 hover:text-black'}`}
+                      >
+                        {f}
+                      </button>
+                    ))}
                   </div>
-                  <button 
-                    onClick={() => setImages([])}
-                    disabled={images.length === 0 || isProcessing}
-                    className="p-3 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-30"
+
+                  {/* Batch Ingest Document */}
+                  <button
+                    onClick={() => setShowBatchPromptModal(true)}
+                    className="px-3 py-1.5 bg-white hover:bg-black hover:text-white text-black border border-border rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                    title="Batch Ingest Prompts / Slides from Document"
                   >
-                    <Trash2 size={20} />
+                    <FileText size={12} className="text-gray-500" />
+                    <span>Batch Prompts</span>
+                  </button>
+
+                  {/* Clear Gallery */}
+                  <button 
+                    onClick={() => {
+                      setImages([]);
+                      setSelectedImageIds([]);
+                    }}
+                    disabled={images.length === 0 || isProcessing}
+                    className="p-2.5 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-30 cursor-pointer"
+                    title="Clear All Images"
+                  >
+                    <Trash2 size={18} />
                   </button>
                 </div>
               </div>
@@ -510,7 +731,9 @@ export default function Dashboard() {
                         initial={{ opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.9 }}
-                        className="group relative aspect-[4/3] bg-white rounded-[32px] overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 border border-border cursor-pointer"
+                        className={`group relative aspect-[4/3] bg-white rounded-[32px] overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 border cursor-pointer ${
+                          selectedImageIds.includes(img.id) ? 'ring-2 ring-black border-black shadow-md' : 'border-border'
+                        }`}
                         onClick={() => openImageDetail(img)}
                       >
                         {/* Image Preview */}
@@ -604,7 +827,7 @@ export default function Dashboard() {
                         </div>
 
                         {/* Analysis Badge */}
-                        <div className="absolute top-4 left-4 flex flex-col gap-2">
+                        <div className="absolute top-4 left-4 flex flex-col gap-2 z-10">
                           {img.analysis && (
                             <div className="bg-accent text-white px-3 py-1 rounded-full flex items-center gap-1.5 shadow-lg">
                               <Search size={10} />
@@ -619,15 +842,46 @@ export default function Dashboard() {
                           )}
                         </div>
 
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeImage(img.id);
-                          }}
-                          className="absolute top-4 right-4 p-2 bg-black/50 backdrop-blur-md text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500"
-                        >
-                          <X size={14} />
-                        </button>
+                        {/* Prompt Title and Text Overlay Banner */}
+                        {(img.title || img.textOverlay) && (
+                          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-3 pt-6 pointer-events-none z-10">
+                            {img.title && (
+                              <p className="text-[10px] font-black text-white uppercase tracking-wider truncate drop-shadow-sm">
+                                {img.title}
+                              </p>
+                            )}
+                            {img.textOverlay && (
+                              <p className="text-[9px] text-amber-200 font-serif italic line-clamp-1 drop-shadow-sm opacity-90">
+                                &ldquo;{img.textOverlay}&rdquo;
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Top Right Actions: Select and Delete */}
+                        <div className="absolute top-4 right-4 flex items-center gap-1.5 z-10">
+                          <button
+                            onClick={(e) => toggleSelectImage(img.id, e)}
+                            className={`p-2 rounded-full backdrop-blur-md transition-all shadow-md ${
+                              selectedImageIds.includes(img.id)
+                                ? 'bg-black text-white opacity-100 ring-2 ring-white/50 scale-100'
+                                : 'bg-black/50 text-white/80 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white'
+                            }`}
+                            title={selectedImageIds.includes(img.id) ? "Deselect photo" : "Select photo"}
+                          >
+                            <Check size={12} className={selectedImageIds.includes(img.id) ? "stroke-[3]" : "opacity-50"} />
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeImage(img.id);
+                            }}
+                            className="p-2 bg-black/50 backdrop-blur-md text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500"
+                            title="Remove photo"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
                       </motion.div>
                     ))}
 
@@ -693,10 +947,15 @@ export default function Dashboard() {
             setRefineSource={setRefineSource}
             isProcessing={isProcessing}
             reprocessSingle={reprocessSingle}
+            handleImprovePrompt={handleImprovePrompt}
+            isImprovingPrompt={isImprovingPrompt}
             suffix={suffix}
             removeImage={removeImage}
             setImages={setImages}
             saveAs={saveAs}
+            characterContextCount={characterContextImages.filter(img => img.enabled !== false).length}
+            characterContextEnabled={characterContextEnabled}
+            onOpenCharacterDrawer={() => setShowCharacterDrawer(true)}
           />
         )}
       </AnimatePresence>
@@ -727,6 +986,29 @@ export default function Dashboard() {
         setFavoriteName={setFavoriteName}
         pendingFavoritePrompt={pendingFavoritePrompt}
         handleSaveFavorite={handleSaveFavorite}
+      />
+
+      <BatchPromptModal
+        isOpen={showBatchPromptModal}
+        onClose={() => setShowBatchPromptModal(false)}
+        onGenerateBatch={generateBatchPrompts}
+        defaultConcurrency={concurrencyLimit}
+        characterContextCount={characterContextImages.filter(img => img.enabled !== false).length}
+        characterContextEnabled={characterContextEnabled}
+        onOpenCharacterDrawer={() => setShowCharacterDrawer(true)}
+      />
+
+      <CharacterContextDrawer
+        isOpen={showCharacterDrawer}
+        onClose={() => setShowCharacterDrawer(false)}
+        characterContextImages={characterContextImages}
+        setCharacterContextImages={setCharacterContextImages}
+        characterContextEnabled={characterContextEnabled}
+        setCharacterContextEnabled={setCharacterContextEnabled}
+        characterName={characterName}
+        setCharacterName={setCharacterName}
+        characterNotes={characterNotes}
+        setCharacterNotes={setCharacterNotes}
       />
 
       <Chatbot 
@@ -821,25 +1103,58 @@ export default function Dashboard() {
                   </div>
                 </section>
 
-                {/* Master System Instruction Overlay */}
+                {/* Character Consistency Anchors */}
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <User size={14} className="text-gray-600" />
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Character Likeness</label>
+                    </div>
+                    <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                      characterContextEnabled && characterContextImages.filter(i => i.enabled !== false).length > 0
+                        ? 'bg-black text-white'
+                        : 'bg-gray-100 text-gray-400'
+                    }`}>
+                      {characterContextImages.filter(i => i.enabled !== false).length} / 4 Anchors
+                    </span>
+                  </div>
+
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-border space-y-3">
+                    <p className="text-[10px] text-gray-600 leading-relaxed">
+                      Maintain exact subject likeness (face, hair, build) across turn-by-turn edits and multi-image batches.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setShowSettingsDrawer(false);
+                        setShowCharacterDrawer(true);
+                      }}
+                      className="w-full py-2 bg-white hover:bg-black hover:text-white text-black border border-border rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                    >
+                      <span>Manage Character Anchors</span>
+                      <ChevronRight size={12} />
+                    </button>
+                  </div>
+                </section>
+
+                {/* Base Prompt / System Instruction */}
                 <section className="space-y-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <Terminal size={14} className="text-accent" />
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Master AI Overlay</label>
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Base Prompt</label>
                     </div>
                     <div className="flex gap-2">
                       <button 
                         onClick={() => setSystemInstruction('')}
                         className="text-[8px] font-black text-gray-400 uppercase hover:text-red-500 transition-colors"
                       >
-                        Creative
+                        Creative (Empty)
                       </button>
                       <button 
                         onClick={() => setSystemInstruction("You are a master professional photography editor. Produce commercial studio-grade clarity, balanced dynamic range, rich natural colors, and crisp details across any photo subject.")}
                         className="text-[8px] font-black text-gray-400 uppercase hover:text-accent transition-colors"
                       >
-                        Minimal
+                        Standard
                       </button>
                     </div>
                   </div>
@@ -848,7 +1163,7 @@ export default function Dashboard() {
                     <textarea
                       value={systemInstruction}
                       onChange={(e) => setSystemInstruction(e.target.value)}
-                      placeholder="Add system-level constraints here..."
+                      placeholder="Add base system-level prompt constraints here..."
                       className="w-full h-32 p-3 bg-gray-50 border border-border rounded-xl text-[10px] font-medium leading-relaxed resize-none focus:ring-2 focus:ring-black/5 outline-none transition-all"
                     />
                     <div className="absolute bottom-2 right-2 flex gap-1">
@@ -856,7 +1171,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <p className="text-[8px] text-text-muted font-bold uppercase tracking-wider leading-relaxed">
-                    Sent as a native System Instruction. If results feel &quot;diluted&quot; or fight your prompt, try &apos;Creative&apos; mode (empty).
+                    Underlying base prompt sent to the AI engine. To give 100% priority to your enhancement prompt, select &apos;Creative (Empty)&apos;.
                   </p>
                 </section>
 
@@ -892,42 +1207,22 @@ export default function Dashboard() {
                     <div>
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Concurrency Limit</span>
-                        <span className="text-[10px] font-black text-accent">{concurrencyLimit}</span>
+                        <span className="text-[10px] font-black text-accent">{concurrencyLimit} Parallel</span>
                       </div>
                       <input 
                         type="range" 
-                        min="1" 
-                        max="10" 
+                        min="2" 
+                        max="20" 
+                        step="1"
                         value={concurrencyLimit}
                         onChange={(e) => setConcurrencyLimit(parseInt(e.target.value))}
                         className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-black"
                       />
                       <div className="flex justify-between mt-1">
-                        <span className="text-[8px] text-gray-400 font-bold">STABLE</span>
-                        <span className="text-[8px] text-gray-400 font-bold">AGGRESSIVE</span>
+                        <span className="text-[8px] text-gray-400 font-bold">2 (STABLE)</span>
+                        <span className="text-[8px] text-gray-400 font-bold">20 (FAST)</span>
                       </div>
                     </div>
-                  </div>
-                </section>
-
-                {/* Automation */}
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Clock size={14} className="text-accent" />
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">Workflow Automation</label>
-                  </div>
-                  
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-border">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-wider">Auto-Analyze</p>
-                      <p className="text-[9px] text-text-muted font-bold uppercase tracking-wider">Run AI vision on upload</p>
-                    </div>
-                    <button 
-                      onClick={() => setAutoAnalyzeOnUpload(!autoAnalyzeOnUpload)}
-                      className={`w-10 h-5 rounded-full transition-colors relative ${autoAnalyzeOnUpload ? 'bg-accent' : 'bg-gray-300'}`}
-                    >
-                      <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${autoAnalyzeOnUpload ? 'left-6' : 'left-1'}`} />
-                    </button>
                   </div>
                 </section>
               </div>

@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
       opMode, 
       mediaType, 
       veoOption,
-      imageModelOption 
+      imageModelOption,
+      characterContextImages
     } = await req.json();
 
     if (!process.env.GEMINI_API_KEY) {
@@ -109,19 +110,63 @@ export async function POST(req: NextRequest) {
 
     // Construct a clean prompt string
     const cleanPrompt = prompt ? prompt.trim() : "";
-    const finalUserPrompt = cleanPrompt || "Enhance this photo with professional studio-grade quality. Optimize lighting balance, expand dynamic range, boost sharpness and clarity, and ensure vibrant yet natural colors.";
+    const finalUserPrompt = cleanPrompt || "Relight and retouch this image as a professional studio would prior to print.";
 
-    const parts = isEditMode && base64Data ? [
-      {
+    // Assemble parts with support for up to 4 Character Context Reference Images
+    const activeContextImages = Array.isArray(characterContextImages)
+      ? characterContextImages.filter((c: any) => c && (c.base64 || c.base64Data) && c.enabled !== false).slice(0, 4)
+      : [];
+
+    const parts: any[] = [];
+
+    // 1. Inject Character Reference Images if provided
+    if (activeContextImages.length > 0) {
+      parts.push({
+        text: `=== CHARACTER CONSISTENCY REFERENCE ANCHORS (${activeContextImages.length} REFERENCE IMAGE${activeContextImages.length > 1 ? 'S' : ''}) ===\n` +
+              `The attached reference images define the primary character/subject's features.\n` +
+              `CRITICAL MANDATE: Maintain likeness and consistency with these reference images in the generated output.`
+      });
+
+      for (let i = 0; i < activeContextImages.length; i++) {
+        const ctx = activeContextImages[i];
+        const raw = ctx.base64 || ctx.base64Data || "";
+        const mType = ctx.mimeType || (raw.match(/data:([^;]+);base64,/)?.[1]) || "image/jpeg";
+        const cleanBase64 = raw.includes(",") ? raw.split(",")[1] : raw;
+        const label = ctx.label || ctx.name || `Reference Angle ${i + 1}`;
+
+        parts.push({ text: `[Character Reference ${i + 1}: ${label}]` });
+        parts.push({
+          inlineData: {
+            data: cleanBase64,
+            mimeType: mType
+          }
+        });
+      }
+    }
+
+    // 2. Inject target image if editing an existing photo
+    if (isEditMode && base64Data) {
+      if (activeContextImages.length > 0) {
+        parts.push({
+          text: `=== BASE SCENE / TARGET IMAGE TO MODIFY ===\nApply the requested turn-by-turn modifications to this base image while maintaining full character likeness matching the Character Reference Anchors provided above.`
+        });
+      }
+      parts.push({
         inlineData: {
           data: base64Data,
           mimeType: mimeType || "image/jpeg",
-        },
-      },
-      { text: finalUserPrompt }
-    ] : [
-      { text: finalUserPrompt }
-    ];
+        }
+      });
+    }
+
+    // 3. Inject User Prompt with character consistency instructions
+    if (activeContextImages.length > 0) {
+      parts.push({
+        text: `=== GENERATION TASK / PROMPT ===\n${finalUserPrompt}\n\nSTRICT REQUIREMENT: The character rendered in this scene MUST have the features, and build of the character shown in the Character Reference Anchors above.`
+      });
+    } else {
+      parts.push({ text: finalUserPrompt });
+    }
 
     const config: any = {};
     if (aspectRatio && aspectRatio !== 'auto') {

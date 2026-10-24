@@ -7,7 +7,9 @@ import {
   Download, 
   Loader2,
   Info,
-  X
+  X,
+  User as UserIcon,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from 'firebase/auth';
@@ -19,7 +21,13 @@ interface AppHeaderProps {
   setShowMemory: (show: boolean) => void;
   showSettingsDrawer: boolean;
   setShowSettingsDrawer: (show: boolean) => void;
+  showCharacterDrawer: boolean;
+  setShowCharacterDrawer: (show: boolean) => void;
+  characterContextCount: number;
+  characterContextEnabled: boolean;
   isProcessing: boolean;
+  activeTasksCount?: number;
+  queuedTasksCount?: number;
   processedCount: number;
   totalToProcess: number;
   hasCompletedImages: boolean;
@@ -39,7 +47,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   setShowMemory,
   showSettingsDrawer,
   setShowSettingsDrawer,
+  showCharacterDrawer,
+  setShowCharacterDrawer,
+  characterContextCount,
+  characterContextEnabled,
   isProcessing,
+  activeTasksCount = 0,
+  queuedTasksCount = 0,
   processedCount,
   totalToProcess,
   hasCompletedImages,
@@ -82,7 +96,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
       <header className="bg-black sticky top-0 z-40 px-6 py-4 flex flex-col gap-3 shadow-2xl">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-3">
-            <div className="flex flex-col items-center">
+            {/* Mobile Logo: B icon in square */}
+            <div className="sm:hidden flex items-center">
+              <div className="w-9 h-9 rounded-lg border-2 border-white flex items-center justify-center bg-white/5 shadow-inner">
+                <span className="font-sans font-black italic tracking-tighter text-2xl text-white">B</span>
+              </div>
+            </div>
+
+            {/* Desktop / Tablet Logo */}
+            <div className="hidden sm:flex flex-col items-center">
               <div className="flex items-baseline text-white">
                 <span className="font-sans font-black italic tracking-tighter text-3xl">BATCH</span>
                 <span className="font-sans font-light italic tracking-tight text-3xl">LAB</span>
@@ -94,6 +116,18 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Live Task Queue Indicator */}
+            {(activeTasksCount > 0 || queuedTasksCount > 0) && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 border border-white/15 rounded-xl text-white shadow-xs">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                <span className="text-[9px] font-black uppercase tracking-wider">
+                  {activeTasksCount > 0 && `${activeTasksCount} Active`}
+                  {activeTasksCount > 0 && queuedTasksCount > 0 && ' • '}
+                  {queuedTasksCount > 0 && `${queuedTasksCount} Queued`}
+                </span>
+              </div>
+            )}
+
             {!isAuthLoading && (
               user ? (
                 <div className="flex items-center gap-3 mr-2 bg-white/5 px-2 py-1 rounded-xl border border-white/10 max-sm:mr-1">
@@ -112,9 +146,30 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                 </button>
               )
             )}
+            {/* Character Context Button */}
+            <button 
+              onClick={() => setShowCharacterDrawer(!showCharacterDrawer)}
+              className={`p-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all border cursor-pointer ${
+                showCharacterDrawer 
+                  ? 'bg-white text-black border-white' 
+                  : (characterContextCount > 0 && characterContextEnabled
+                      ? 'bg-white/15 text-white border-accent/60 shadow-xs' 
+                      : 'bg-white/10 hover:bg-white/20 text-white border-white/10')
+              }`}
+              title="Character Reference Anchors (Up to 4 Images)"
+            >
+              <UserIcon className={`w-4 h-4 ${characterContextCount > 0 && characterContextEnabled ? 'text-accent' : 'text-gray-300'}`} />
+              <span className="hidden md:inline">
+                {characterContextCount > 0 && characterContextEnabled ? `Character (${characterContextCount})` : 'Character'}
+              </span>
+              {characterContextCount > 0 && characterContextEnabled && (
+                <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse hidden sm:block" />
+              )}
+            </button>
+
             <button 
               onClick={() => setShowMemory(!showMemory)}
-              className={`p-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all border ${showMemory ? 'bg-white text-black border-white' : 'bg-white/10 hover:bg-white/20 text-white border-white/10'}`}
+              className={`p-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all border cursor-pointer ${showMemory ? 'bg-white text-black border-white' : 'bg-white/10 hover:bg-white/20 text-white border-white/10'}`}
               title="History"
             >
               <History className="w-4 h-4" />

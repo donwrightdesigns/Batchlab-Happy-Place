@@ -20,22 +20,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { BeforeAfterSlider } from './before-after-slider';
-
-interface ImageFile {
-  id: string;
-  file: File;
-  preview: string;
-  status: 'idle' | 'processing' | 'completed' | 'error';
-  result?: string;
-  resultPreview?: string;
-  analysis?: string;
-  usedAnalysis?: boolean;
-  finalPrompt?: string;
-  error?: string;
-  isFavorite?: boolean;
-  mediaType?: 'image' | 'video';
-  reprocessPrompt?: string;
-}
+import { ImageFile } from '@/hooks/useREBE';
 
 interface ImageDetailModalProps {
   selectedImage: ImageFile;
@@ -55,11 +40,18 @@ interface ImageDetailModalProps {
   refineSource: 'original' | 'result';
   setRefineSource: (s: 'original' | 'result') => void;
   isProcessing: boolean;
-  reprocessSingle: (newVariation: boolean) => void;
+  reprocessSingle: (newVariation?: boolean, imgId?: string, customPrompt?: string) => void;
+  handleImprovePrompt?: (prompt: string, mode?: 'create' | 'edit') => Promise<string>;
+  isImprovingPrompt?: boolean;
+  cancelTask?: (id: string) => void;
+  retryTask?: (id: string) => void;
   suffix: string;
   removeImage: (id: string) => void;
   setImages: (update: (prev: ImageFile[]) => ImageFile[]) => void;
   saveAs: (blob: Blob, name: string) => void;
+  characterContextCount?: number;
+  characterContextEnabled?: boolean;
+  onOpenCharacterDrawer?: () => void;
 }
 
 export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
@@ -81,10 +73,17 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
   setRefineSource,
   isProcessing,
   reprocessSingle,
+  handleImprovePrompt,
+  isImprovingPrompt = false,
+  cancelTask,
+  retryTask,
   suffix,
   removeImage,
   setImages,
-  saveAs
+  saveAs,
+  characterContextCount = 0,
+  characterContextEnabled = false,
+  onOpenCharacterDrawer
 }) => {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-8">
@@ -208,39 +207,89 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
         <div className="w-full md:w-96 p-5 sm:p-8 flex-1 md:flex-none flex flex-col gap-6 text-white border-t md:border-t-0 md:border-l border-white/10 overflow-y-auto no-scrollbar">
           <div>
             <div className="flex items-center justify-between mb-1">
-              <h3 className="font-display font-bold text-xl">Photo Details</h3>
+              <h3 className="font-display font-bold text-xl">{selectedImage.title || 'Photo Details'}</h3>
               <span className="text-[10px] text-gray-500 font-mono">
                 {images.findIndex(img => img.id === selectedImage.id) + 1} / {images.length}
               </span>
             </div>
+            {selectedImage.concept && (
+              <p className="text-[10px] text-accent font-bold uppercase tracking-wider mb-0.5">{selectedImage.concept}</p>
+            )}
             <p className="text-xs text-gray-400 font-mono truncate">{selectedImage.file.name}</p>
           </div>
+
+          {selectedImage.textOverlay && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-200">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[9px] font-black uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+                  💬 Text Overlay / Caption
+                </span>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(selectedImage.textOverlay || '');
+                  }}
+                  className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded text-[8px] font-black uppercase tracking-wider transition-colors"
+                >
+                  Copy Text
+                </button>
+              </div>
+              <p className="text-xs font-serif italic text-white leading-relaxed">
+                &ldquo;{selectedImage.textOverlay}&rdquo;
+              </p>
+            </div>
+          )}
           
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2">
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2">Status</p>
-                <div className="flex items-center gap-2">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2">Queue Status</p>
+                <div className="flex items-center justify-between gap-2">
                   {selectedImage.status === 'completed' ? (
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-2 text-green-400 text-sm font-bold">
+                      <div className="flex items-center gap-1.5 text-green-400 text-xs font-bold">
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>Processed</span>
+                        <span>Completed</span>
                       </div>
                       {selectedImage.usedAnalysis && (
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-purple-500/20 border border-purple-500/30 rounded-full text-[8px] text-purple-400 uppercase font-black tracking-tighter">
-                          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-                          AI Analyzed
+                        <div className="flex items-center gap-1 px-1.5 py-0.5 bg-purple-500/20 border border-purple-500/30 rounded-full text-[8px] text-purple-400 uppercase font-black">
+                          AI
                         </div>
                       )}
                     </div>
                   ) : selectedImage.status === 'processing' ? (
-                    <div className="flex items-center gap-2 text-yellow-400 text-sm font-bold">
+                    <div className="flex items-center gap-2 text-accent text-xs font-bold">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Processing</span>
+                      <span>Processing...</span>
+                    </div>
+                  ) : selectedImage.status === 'queued' ? (
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-1.5 text-amber-400 text-xs font-bold">
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                        <span>Queued</span>
+                      </div>
+                      {cancelTask && (
+                        <button
+                          onClick={() => cancelTask(selectedImage.id)}
+                          className="px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white rounded text-[8px] font-black uppercase tracking-wider transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  ) : selectedImage.status === 'error' ? (
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-red-400 text-xs font-bold truncate">Error</span>
+                      {retryTask && (
+                        <button
+                          onClick={() => retryTask(selectedImage.id)}
+                          className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[8px] font-black uppercase tracking-wider transition-colors cursor-pointer"
+                        >
+                          Retry
+                        </button>
+                      )}
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 text-gray-400 text-sm font-bold">
+                    <div className="flex items-center gap-2 text-gray-400 text-xs font-bold">
                       <ImageIcon className="w-4 h-4" />
                       <span>Idle</span>
                     </div>
@@ -260,7 +309,7 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
                 <p className={`text-[10px] uppercase tracking-widest font-bold ${!selectedImage.analysis && !isAnalyzing ? 'text-white/70' : 'text-gray-500'}`}>Analysis</p>
                 <div className={`flex items-center gap-2 text-sm font-bold ${!selectedImage.analysis && !isAnalyzing ? 'text-white' : 'text-accent'}`}>
                   {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  <span>{isAnalyzing ? 'Analyzing...' : selectedImage.analysis ? 'Re-Analyze' : 'Run Pre-Process'}</span>
+                  <span>{isAnalyzing ? 'Analyzing...' : selectedImage.analysis ? 'Re-Analyze' : 'Analyze Photo'}</span>
                 </div>
               </button>
             </div>
@@ -338,6 +387,26 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
               </motion.div>
             )}
 
+            {/* Character Context Anchors Indicator */}
+            <div className="p-3 rounded-2xl border bg-white/5 border-white/10 flex items-center justify-between gap-3 text-[10px]">
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${characterContextEnabled && characterContextCount > 0 ? 'bg-accent animate-pulse' : 'bg-gray-600'}`} />
+                <span className={`font-bold uppercase tracking-wider ${characterContextEnabled && characterContextCount > 0 ? 'text-white' : 'text-gray-400'}`}>
+                  {characterContextEnabled && characterContextCount > 0 
+                    ? `Character Locked (${characterContextCount} Anchor${characterContextCount > 1 ? 's' : ''})` 
+                    : 'Character Anchors'}
+                </span>
+              </div>
+              {onOpenCharacterDrawer && (
+                <button
+                  onClick={onOpenCharacterDrawer}
+                  className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-lg font-black uppercase text-[8px] tracking-wider transition-colors border border-white/10 cursor-pointer"
+                >
+                  {characterContextCount > 0 ? 'Manage' : 'Link'}
+                </button>
+              )}
+            </div>
+
             <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex flex-col gap-0.5">
@@ -368,22 +437,41 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
                 className="w-full h-24 bg-transparent border-0 outline-none text-xs text-gray-300 resize-none leading-relaxed placeholder:text-gray-700"
                 placeholder={refineSource === 'original' ? "Prompt for new version from original source..." : "Iterate on the current enhanced result..."}
               />
+              <div className="flex items-center justify-between gap-2 mt-1">
+                {handleImprovePrompt && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!reprocessPrompt.trim() || isImprovingPrompt) return;
+                      const enhanced = await handleImprovePrompt(reprocessPrompt, 'edit');
+                      setReprocessPrompt(enhanced);
+                    }}
+                    disabled={isImprovingPrompt || !reprocessPrompt.trim()}
+                    className="px-2.5 py-1 bg-accent/10 hover:bg-accent/20 text-accent disabled:opacity-30 rounded-lg text-[8px] font-black uppercase tracking-wider transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Improve with AI"
+                  >
+                    {isImprovingPrompt ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5" />}
+                    <span>{isImprovingPrompt ? 'Polishing...' : 'Polish Prompt'}</span>
+                  </button>
+                )}
+                <span className="text-[8px] text-gray-600 font-mono ml-auto">Individual Revision</span>
+              </div>
               <div className="flex gap-2 mt-2">
                 <button 
-                  onClick={() => reprocessSingle(false)}
-                  disabled={selectedImage.status === 'processing' || (isProcessing && selectedImage.status !== 'completed')}
-                  className="flex-1 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                  onClick={() => reprocessSingle(false, selectedImage.id, reprocessPrompt)}
+                  disabled={selectedImage.status === 'processing'}
+                  className="flex-1 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-white/50" />}
-                  Redo
+                  {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin text-accent" /> : <Sparkles className="w-3 h-3 text-white/50" />}
+                  <span>{selectedImage.status === 'processing' ? 'Processing...' : 'Redo'}</span>
                 </button>
                 <button 
-                  onClick={() => reprocessSingle(true)}
-                  disabled={selectedImage.status === 'processing' || (isProcessing && selectedImage.status !== 'completed')}
-                  className="flex-1 py-2 bg-accent/20 hover:bg-accent/30 text-accent disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                  onClick={() => reprocessSingle(true, selectedImage.id, reprocessPrompt)}
+                  disabled={selectedImage.status === 'processing'}
+                  className="flex-1 py-2 bg-accent/20 hover:bg-accent/30 text-accent disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {selectedImage.status === 'processing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                  Variation
+                  <span>Variation</span>
                 </button>
               </div>
             </div>

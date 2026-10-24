@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await genAI.models.generateContent({
-      model: model || "gemini-3.1-flash-lite-image",
+      model: model || "gemini-3.7-flash",
       contents: [
         {
           inlineData: {
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
           },
         },
         {
-          text: "Act as a professional photographic critic and image processing expert. Identify technical flaws (exposure, lighting, dynamic range, composition, color balance, noise, artifacts, sharpness) and provide concise, actionable correction instructions for an AI image editor. Format as:\n\nFLAWS:\n- [flaws]\n\nCORRECTIONS:\n- [instructions]",
+          text: "Act as a professional photographic critic and image processing expert. Identify technical flaws (exposure, lighting, dynamic range, composition, color balance, noise, artifacts, sharpness) and provide concise, actionable correction instructions. Format as:\n\nCORRECTIONS:\n- [instructions]",
         },
       ]
     });

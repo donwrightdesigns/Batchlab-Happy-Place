@@ -6,6 +6,9 @@ export interface MemoryItem {
   id: string;
   timestamp: number;
   prompt: string;
+  title?: string;
+  textOverlay?: string;
+  concept?: string;
   status?: 'pending' | 'completed' | 'error';
   error?: string;
   originalImage?: string; // Base64 (Local only)
@@ -78,6 +81,55 @@ async function compressImage(base64: string, maxWidth = 1400, quality = 0.7): Pr
   });
 }
 
+export const QUOTA_EXCEEDED_EVENT = 'rebe_quota_exceeded';
+const QUOTA_CACHE_KEY = 'rebe_firestore_quota_exceeded';
+
+export function isQuotaExceededError(error: unknown): boolean {
+  if (!error) return false;
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    message.includes('quota exceeded') || 
+    message.includes('quota limit exceeded') ||
+    message.includes('resource-exhausted') ||
+    message.includes('resource_exhausted') ||
+    message.includes('free daily read units') ||
+    message.includes('free tier database')
+  );
+}
+
+export function isQuotaExceededCached(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(QUOTA_CACHE_KEY);
+    if (!raw) return false;
+    const timestamp = parseInt(raw, 10);
+    // Cache quota exceeded status for 4 hours
+    if (Date.now() - timestamp < 4 * 60 * 60 * 1000) {
+      return true;
+    }
+    localStorage.removeItem(QUOTA_CACHE_KEY);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function setQuotaExceededCached(exceeded: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (exceeded) {
+      localStorage.setItem(QUOTA_CACHE_KEY, Date.now().toString());
+      window.dispatchEvent(new CustomEvent(QUOTA_EXCEEDED_EVENT));
+    } else {
+      localStorage.removeItem(QUOTA_CACHE_KEY);
+    }
+  } catch {}
+}
+
+export function notifyQuotaExceeded() {
+  setQuotaExceededCached(true);
+}
+
 enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -89,12 +141,15 @@ enum OperationType {
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const message = error instanceof Error ? error.message : String(error);
-  const isQuotaExceeded = message.toLowerCase().includes('quota exceeded') || 
-                          message.toLowerCase().includes('quota limit exceeded');
+  const isQuota = isQuotaExceededError(error);
+
+  if (isQuota) {
+    notifyQuotaExceeded();
+  }
 
   const errInfo = {
     error: message,
-    isQuotaExceeded,
+    isQuotaExceeded: isQuota,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -112,10 +167,12 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   };
   
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (isQuota) {
+    console.warn('Firestore Quota Exceeded (falling back to local storage):', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   
-  // If it's a quota error, we might want to handle it differently in the UI
-  // but we still throw so the caller knows it failed.
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -201,13 +258,17 @@ export function subscribeToLocalMemory(callback: (items: MemoryItem[]) => void) 
 export async function saveBatch(batch: Batch) {
   let batchToSave = { ...batch };
 
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/batches`;
     try {
       await setDoc(doc(db, path, batch.id), batchToSave);
       batchToSave.isSynced = true;
     } catch (error) {
-      console.warn("Firestore batch save failed:", error);
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceeded();
+      } else {
+        console.warn("Firestore batch save failed:", error);
+      }
     }
   }
 
@@ -234,14 +295,22 @@ export async function getBatches(): Promise<Batch[]> {
 }
 
 export async function getCloudBatches(userId: string): Promise<Batch[]> {
+  const local = await getBatches();
+  if (isQuotaExceededCached()) {
+    return local;
+  }
   const path = `users/${userId}/batches`;
   const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(30));
   try {
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => doc.data() as Batch);
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      notifyQuotaExceeded();
+      return local;
+    }
     handleFirestoreError(error, OperationType.LIST, path);
-    return [];
+    return local;
   }
 }
 
@@ -249,26 +318,39 @@ export function subscribeToBatches(userId: string | null, callback: (items: Batc
   if (typeof window === 'undefined') return () => {};
   
   const localHandler = (e: any) => {
-    if (!userId) callback(e.detail);
+    if (!userId || isQuotaExceededCached()) callback(e.detail);
   };
   window.addEventListener(BATCHES_UPDATE_EVENT, localHandler);
 
   let unsubscribeFirestore = () => {};
-  if (userId) {
+  if (userId && !isQuotaExceededCached()) {
     const path = `users/${userId}/batches`;
     const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(30));
-    unsubscribeFirestore = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => doc.data() as Batch);
-      callback(items);
-    }, (error) => {
-      if (error.code === 'cancelled') return;
-      try {
-        handleFirestoreError(error, OperationType.LIST, path);
-      } catch (e: any) {
-        if (onError) onError(e);
-        console.warn("Batch subscription error:", e.message);
+    try {
+      unsubscribeFirestore = onSnapshot(q, (snapshot) => {
+        const items = snapshot.docs.map(doc => doc.data() as Batch);
+        callback(items);
+      }, (error) => {
+        if (error.code === 'cancelled') return;
+        if (isQuotaExceededError(error)) {
+          notifyQuotaExceeded();
+          getBatches().then(callback);
+          if (onError) onError(error);
+          return;
+        }
+        try {
+          handleFirestoreError(error, OperationType.LIST, path);
+        } catch (e: any) {
+          if (onError) onError(e);
+          console.warn("Batch subscription error:", e.message);
+        }
+      });
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceeded();
+        getBatches().then(callback);
       }
-    });
+    }
   } else {
     getBatches().then(callback);
   }
@@ -285,7 +367,7 @@ export async function clearMemory() {
     window.dispatchEvent(new CustomEvent(MEMORY_UPDATE_EVENT, { detail: [] }));
   }
   
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/enhancements`;
     try {
       const q = query(collection(db, path));
@@ -293,7 +375,11 @@ export async function clearMemory() {
       const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
       await Promise.all(deletePromises);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceeded();
+      } else {
+        handleFirestoreError(error, OperationType.DELETE, path);
+      }
     }
   }
 }
@@ -317,12 +403,15 @@ export async function getFullMemoryItem(id: string): Promise<MemoryItem | null> 
     }
   }
 
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/enhancements/${id}`;
     try {
       const snap = await getDocFromServer(doc(db, path));
       if (snap.exists()) return snap.data() as MemoryItem;
     } catch (e) {
+      if (isQuotaExceededError(e)) {
+        notifyQuotaExceeded();
+      }
       console.warn("Failed to fetch full item from cloud:", e);
     }
   }
@@ -330,65 +419,95 @@ export async function getFullMemoryItem(id: string): Promise<MemoryItem | null> 
 }
 
 export async function getCloudMemory(userId: string): Promise<MemoryItem[]> {
+  const local = await getMemory();
+  if (isQuotaExceededCached()) {
+    return local;
+  }
   const path = `users/${userId}/enhancements`;
   const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(50));
   try {
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => doc.data() as MemoryItem);
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      notifyQuotaExceeded();
+      return local;
+    }
     handleFirestoreError(error, OperationType.LIST, path);
-    return [];
+    return local;
   }
 }
 
 export function subscribeToMemory(userId: string, callback: (items: MemoryItem[]) => void, onError?: (error: any) => void) {
+  if (isQuotaExceededCached()) {
+    getMemory().then(callback);
+    return subscribeToLocalMemory(callback);
+  }
+
   const path = `users/${userId}/enhancements`;
   const q = query(collection(db, path), orderBy('timestamp', 'desc'), limit(50));
   
-  return onSnapshot(q, (snapshot) => {
-    get<MemoryItem[]>(MEMORY_KEY).then(localMemory => {
-      const cloudItems = snapshot.docs.map(doc => doc.data() as MemoryItem);
-      const cloudIds = new Set(cloudItems.map(i => i.id));
-      
-      const localMemoryArray = localMemory || [];
-      const localMemoryMap = new Map(localMemoryArray.map(item => [item.id, item]));
-      
-      // Combine cloud items with local-only items
-      const enrichedCloudItems = cloudItems.map(cloudItem => {
-         const localMatch = localMemoryMap.get(cloudItem.id);
-         if (localMatch) {
-            return {
-               ...cloudItem,
-               originalThumbnail: localMatch.originalThumbnail || cloudItem.originalThumbnail,
-               editedThumbnail: localMatch.editedThumbnail || cloudItem.editedThumbnail
-            };
-         }
-         return cloudItem;
-      });
+  try {
+    return onSnapshot(q, (snapshot) => {
+      get<MemoryItem[]>(MEMORY_KEY).then(localMemory => {
+        const cloudItems = snapshot.docs.map(doc => doc.data() as MemoryItem);
+        const cloudIds = new Set(cloudItems.map(i => i.id));
+        
+        const localMemoryArray = localMemory || [];
+        const localMemoryMap = new Map(localMemoryArray.map(item => [item.id, item]));
+        
+        // Combine cloud items with local-only items
+        const enrichedCloudItems = cloudItems.map(cloudItem => {
+           const localMatch = localMemoryMap.get(cloudItem.id);
+           if (localMatch) {
+              return {
+                 ...cloudItem,
+                 originalThumbnail: localMatch.originalThumbnail || cloudItem.originalThumbnail,
+                 editedThumbnail: localMatch.editedThumbnail || cloudItem.editedThumbnail
+              };
+           }
+           return cloudItem;
+        });
 
-      const localOnlyItems = localMemoryArray.filter(item => !cloudIds.has(item.id));
+        const localOnlyItems = localMemoryArray.filter(item => !cloudIds.has(item.id));
+        
+        // Merge and sort by timestamp
+        const allItems = [...enrichedCloudItems, ...localOnlyItems].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        
+        callback(allItems.slice(0, 100));
+      }).catch(() => {
+        const cloudItems = snapshot.docs.map(doc => doc.data() as MemoryItem);
+        callback(cloudItems);
+      });
+    }, (error) => {
+      // Ignore cancelled errors which are often just idle stream disconnects
+      if (error.code === 'cancelled') return;
       
-      // Merge and sort by timestamp
-      const allItems = [...enrichedCloudItems, ...localOnlyItems].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      
-      callback(allItems.slice(0, 100));
-    }).catch(() => {
-      const cloudItems = snapshot.docs.map(doc => doc.data() as MemoryItem);
-      callback(cloudItems);
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceeded();
+        getMemory().then(callback);
+        if (onError) onError(error);
+        return;
+      }
+
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (e) {
+        if (onError) onError(e);
+      }
     });
-  }, (error) => {
-    // Ignore cancelled errors which are often just idle stream disconnects
-    if (error.code === 'cancelled') return;
-    
-    try {
-      handleFirestoreError(error, OperationType.LIST, path);
-    } catch (e) {
-      if (onError) onError(e);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      notifyQuotaExceeded();
+      getMemory().then(callback);
     }
-  });
+    return subscribeToLocalMemory(callback);
+  }
 }
 
 export async function syncLocalToFirestore(userId: string) {
+  if (isQuotaExceededCached()) return;
+
   const localMemory = (await get<MemoryItem[]>(MEMORY_KEY)) || [];
   const path = `users/${userId}/enhancements`;
   let localUpdated = false;
@@ -417,6 +536,10 @@ export async function syncLocalToFirestore(userId: string) {
 
       await setDoc(doc(db, path, item.id), cloudItem);
     } catch (e) {
+      if (isQuotaExceededError(e)) {
+        notifyQuotaExceeded();
+        break;
+      }
       console.warn("Failed to sync item:", item.id, e);
     }
   }
@@ -431,19 +554,23 @@ export async function syncLocalToFirestore(userId: string) {
 
 export async function saveFavoritePrompt(fav: FavoritePrompt) {
   const current = (await get<FavoritePrompt[]>(FAVORITES_KEY)) || [];
-  const updated = [fav, ...current];
+  const updated = [fav, ...current.filter(f => f.id !== fav.id)];
   await set(FAVORITES_KEY, updated);
   
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(FAVORITES_UPDATE_EVENT, { detail: updated }));
   }
 
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/favorites`;
     try {
       await setDoc(doc(db, path, fav.id), fav);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `${path}/${fav.id}`);
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceeded();
+      } else {
+        handleFirestoreError(error, OperationType.WRITE, `${path}/${fav.id}`);
+      }
     }
   }
 }
@@ -461,25 +588,45 @@ export async function deleteFavoritePrompt(id: string) {
     window.dispatchEvent(new CustomEvent(FAVORITES_UPDATE_EVENT, { detail: updated }));
   }
 
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/favorites`;
     try {
       await deleteDoc(doc(db, path, id));
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceeded();
+      } else {
+        handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
+      }
     }
   }
 }
 
 export async function getCloudFavorites(userId: string): Promise<FavoritePrompt[]> {
+  const local = await getFavoritePrompts();
+  if (isQuotaExceededCached()) {
+    return local;
+  }
   const path = `users/${userId}/favorites`;
   const q = query(collection(db, path), orderBy('timestamp', 'desc'));
   try {
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => doc.data() as FavoritePrompt);
+    const cloudList = snapshot.docs.map(doc => doc.data() as FavoritePrompt);
+    // Combine cloud and local
+    const merged = [...cloudList];
+    for (const l of local) {
+      if (!merged.some(c => c.id === l.id)) {
+        merged.push(l);
+      }
+    }
+    return merged;
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      notifyQuotaExceeded();
+      return local;
+    }
     handleFirestoreError(error, OperationType.LIST, path);
-    return [];
+    return local;
   }
 }
 
@@ -493,20 +640,32 @@ export function subscribeToFavorites(callback: (items: FavoritePrompt[]) => void
   window.addEventListener(FAVORITES_UPDATE_EVENT, handler);
 
   let unsubscribeFirestore = () => {};
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/favorites`;
     const q = query(collection(db, path), orderBy('timestamp', 'desc'));
-    unsubscribeFirestore = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => doc.data() as FavoritePrompt);
-      callback(items);
-    }, (error) => {
-      if (error.code === 'cancelled') return;
-      try {
-        handleFirestoreError(error, OperationType.LIST, path);
-      } catch (e) {
-        if (onError) onError(e);
+    try {
+      unsubscribeFirestore = onSnapshot(q, (snapshot) => {
+        const items = snapshot.docs.map(doc => doc.data() as FavoritePrompt);
+        callback(items);
+      }, (error) => {
+        if (error.code === 'cancelled') return;
+        if (isQuotaExceededError(error)) {
+          notifyQuotaExceeded();
+          getFavoritePrompts().then(callback);
+          if (onError) onError(error);
+          return;
+        }
+        try {
+          handleFirestoreError(error, OperationType.LIST, path);
+        } catch (e) {
+          if (onError) onError(e);
+        }
+      });
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceeded();
       }
-    });
+    }
   }
 
   return () => {
@@ -517,24 +676,30 @@ export function subscribeToFavorites(callback: (items: FavoritePrompt[]) => void
 
 export async function saveSystemInstruction(inst: string) {
   await set(SYSTEM_INST_KEY, inst);
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/settings`;
     try {
       await setDoc(doc(db, path, 'system'), { instruction: inst });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceeded();
+      } else {
+        handleFirestoreError(error, OperationType.WRITE, path);
+      }
     }
   }
 }
 
 export async function getSystemInstruction(): Promise<string | null> {
-  if (auth.currentUser) {
+  if (auth.currentUser && !isQuotaExceededCached()) {
     const path = `users/${auth.currentUser.uid}/settings`;
     try {
       const snap = await getDocFromServer(doc(db, path, 'system'));
       if (snap.exists()) return (snap.data() as any).instruction;
     } catch (e) {
-      // Don't throw here, just fallback to local
+      if (isQuotaExceededError(e)) {
+        notifyQuotaExceeded();
+      }
       console.warn("Failed to fetch system instruction from cloud:", e);
     }
   }
