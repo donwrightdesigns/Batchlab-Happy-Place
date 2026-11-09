@@ -35,7 +35,9 @@ import {
   Zap,
   Check,
   FileText,
-  User
+  User,
+  Anchor,
+  Clapperboard
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { saveAs } from 'file-saver';
@@ -49,12 +51,16 @@ import { BatchIdentifyModal } from '@/components/BatchIdentifyModal';
 import { FavoriteNamingModal } from '@/components/FavoriteNamingModal';
 import { BatchPromptModal } from '@/components/BatchPromptModal';
 import { CharacterContextDrawer } from '@/components/CharacterContextDrawer';
+import { DirectorPanel } from '@/components/DirectorPanel';
+import { MOTION_CHOREOGRAPHIES, VideoModel, StudioDomain, getChoreographiesForDomain, DOMAIN_DEFAULTS } from '@/lib/gemini';
 import { useREBE } from '@/hooks/useREBE';
 
 export default function Dashboard() {
   const {
     images, setImages,
     isMounted,
+    studioDomain, setStudioDomain,
+    handleSwitchDomain,
     prompt, setPrompt,
     resolution, setResolution,
     aspectRatio, setAspectRatio,
@@ -74,7 +80,14 @@ export default function Dashboard() {
     processedCount,
     totalToProcess,
     mediaType, setMediaType,
+    videoModel, setVideoModel,
     veoOption, setVeoOption,
+    choreography, setChoreography,
+    referenceAnchor, setReferenceAnchor,
+    toggleReferenceAnchor,
+    showDirectorDrawer, setShowDirectorDrawer,
+    pullTriggerPlate,
+    pullTriggerMotion,
     galleryFilter, setGalleryFilter,
     showSettingsDrawer, setShowSettingsDrawer,
     showCharacterDrawer, setShowCharacterDrawer,
@@ -170,6 +183,8 @@ export default function Dashboard() {
         setShowSettingsDrawer={setShowSettingsDrawer}
         showCharacterDrawer={showCharacterDrawer}
         setShowCharacterDrawer={setShowCharacterDrawer}
+        showDirectorDrawer={showDirectorDrawer}
+        setShowDirectorDrawer={setShowDirectorDrawer}
         characterContextCount={characterContextImages.filter(img => img.enabled !== false).length}
         characterContextEnabled={characterContextEnabled}
         isProcessing={isProcessing}
@@ -188,6 +203,34 @@ export default function Dashboard() {
       <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Left Panel: Controls */}
         <div className="w-full lg:w-80 border-r border-border bg-white p-6 flex flex-col gap-5 overflow-y-auto">
+          {/* Studio Domain Switcher (Architecture vs Portrait vs Universal) */}
+          <section className="p-3 bg-neutral-950 text-white rounded-2xl border border-white/10 shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Studio Domain</label>
+              <span className="text-[8px] font-mono font-bold text-amber-400 uppercase tracking-widest">
+                {DOMAIN_DEFAULTS[studioDomain].badge} MODE
+              </span>
+            </div>
+            <div className="grid grid-cols-3 p-1 bg-white/5 rounded-xl border border-white/10">
+              {(['arch', 'portrait', 'universal'] as const).map((dom) => (
+                <button
+                  key={dom}
+                  onClick={() => handleSwitchDomain(dom)}
+                  className={`py-1.5 px-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                    studioDomain === dom
+                      ? 'bg-amber-400 text-black shadow-xs font-black'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {dom === 'arch' ? 'Arch / RE' : dom === 'portrait' ? 'Portrait' : 'Universal'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[8px] text-gray-400 font-medium leading-relaxed px-0.5">
+              {DOMAIN_DEFAULTS[studioDomain].description}
+            </p>
+          </section>
+
           {/* Mode Switcher: Retouch vs Text-to-Image Creation */}
           <section>
             <div className="flex items-center justify-between mb-2">
@@ -233,6 +276,74 @@ export default function Dashboard() {
                 <span>Video</span>
               </button>
             </div>
+          </section>
+
+          {/* AI Creative Director Drawer Trigger */}
+          <section>
+            <button
+              onClick={() => setShowDirectorDrawer(true)}
+              className="w-full px-3.5 py-2.5 bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-transparent hover:from-amber-500/20 text-black rounded-2xl flex items-center justify-between transition-all group shadow-xs cursor-pointer border border-amber-400/40"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="p-1.5 bg-amber-400 text-black rounded-xl group-hover:scale-110 transition-transform shadow-xs">
+                  <Clapperboard size={13} />
+                </span>
+                <div className="text-left">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-black flex items-center gap-1.5">
+                    Creative Director
+                    <span className="px-1.5 py-0.2 bg-black text-white text-[7px] font-mono rounded font-bold">3.8</span>
+                  </p>
+                  <p className="text-[8px] text-gray-500 font-bold uppercase tracking-tight">Critique · Staging · Trigger</p>
+                </div>
+              </div>
+              <ChevronRight size={14} className="text-amber-500 group-hover:translate-x-0.5 transition-transform" />
+            </button>
+          </section>
+
+          {/* Subject & Reference Anchor (/c) Staging */}
+          <section className="p-3 bg-gray-50/90 rounded-2xl border border-border space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-widest text-black flex items-center gap-1.5">
+                <Anchor size={12} className={referenceAnchor ? "text-amber-500" : "text-gray-400"} />
+                <span>/c Identity Anchor</span>
+              </span>
+              {referenceAnchor && (
+                <button 
+                  onClick={() => toggleReferenceAnchor(null as any)}
+                  className="text-[9px] font-bold text-gray-400 hover:text-red-500 uppercase tracking-wider transition-colors cursor-pointer"
+                  title="Clear anchor"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {referenceAnchor ? (
+              <div className="flex items-center gap-2.5 p-2 bg-white rounded-xl border border-amber-400/60 shadow-xs">
+                <div className="relative w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-amber-300">
+                  <img 
+                    src={referenceAnchor.resultPreview || referenceAnchor.preview} 
+                    alt={referenceAnchor.file.name} 
+                    className="w-full h-full object-cover" 
+                  />
+                  <span className="absolute bottom-0 inset-x-0 bg-amber-500 text-black text-[7px] font-black text-center leading-none py-0.5 uppercase">/c</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-black text-black truncate uppercase tracking-tight">
+                    {referenceAnchor.title || referenceAnchor.file.name}
+                  </p>
+                  <p className="text-[8px] text-amber-600 font-bold uppercase tracking-wider">
+                    Consistency Anchor Active
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2 bg-white/70 rounded-xl border border-dashed border-gray-200 text-center">
+                <p className="text-[9px] text-gray-500 font-medium leading-relaxed">
+                  Pin any plate via <Anchor size={10} className="inline text-amber-500 mx-0.5" /> as <strong className="text-black font-black">/c Anchor</strong> to preserve scale, fixtures & facade identity.
+                </p>
+              </div>
+            )}
           </section>
 
           {/* Batch Ingest Shortcut */}
@@ -469,19 +580,78 @@ export default function Dashboard() {
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  className="space-y-2 overflow-hidden pt-1 border-t border-border/60"
+                  className="space-y-3 overflow-hidden pt-2 border-t border-border/60"
                 >
-                  <label className="text-[9px] font-black uppercase tracking-[0.2em] text-text-muted">Video Quality</label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(['lite', 'fast', 'normal'] as const).map((style) => (
-                      <button
-                        key={style}
-                        onClick={() => setVeoOption(style)}
-                        className={`py-1.5 px-2 rounded-lg border text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${veoOption === style ? 'bg-black text-white border-black shadow-xs' : 'bg-white text-gray-500 border-border hover:border-gray-300'}`}
-                      >
-                        {style}
-                      </button>
-                    ))}
+                  {/* Video Engine Model */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] font-black uppercase tracking-[0.2em] text-text-muted">Video Engine</label>
+                      <span className="text-[8px] font-mono font-bold text-amber-500 uppercase tracking-wider">
+                        {videoModel === 'pvid' ? 'P-Video Turbo' : videoModel === 'omni' ? 'Google Omni 1.1' : videoModel === 'h3' ? 'MiniMax H3' : videoModel === 'seed' ? 'Seed 2.5' : 'WAN 3.0'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1">
+                      {([
+                        { id: 'pvid', label: 'P-VID' },
+                        { id: 'omni', label: 'OMNI' },
+                        { id: 'h3', label: 'H3' },
+                        { id: 'seed', label: 'SEED' },
+                        { id: 'wan3', label: 'WAN3' }
+                      ] as const).map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            setVideoModel(m.id as VideoModel);
+                            setVeoOption(m.id as any);
+                          }}
+                          className={`py-1.5 px-0.5 rounded-lg border text-[8.5px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            videoModel === m.id
+                              ? 'bg-black text-amber-400 border-black shadow-xs ring-1 ring-amber-400/30'
+                              : 'bg-white text-gray-500 border-border hover:border-gray-300'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Motion Choreography Presets */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] font-black uppercase tracking-[0.2em] text-text-muted">Motion Choreography</label>
+                      {choreography && (
+                        <button
+                          onClick={() => setChoreography('')}
+                          className="text-[8px] font-bold text-gray-400 hover:text-black uppercase tracking-wider"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {getChoreographiesForDomain(studioDomain).map((ch) => {
+                        const isSelected = choreography === ch.id;
+                        return (
+                          <button
+                            key={ch.id}
+                            onClick={() => setChoreography(isSelected ? '' : ch.id)}
+                            className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                              isSelected
+                                ? 'bg-black text-white border-black ring-1 ring-amber-400/40 shadow-xs'
+                                : 'bg-white text-gray-700 border-border hover:border-gray-300'
+                            }`}
+                          >
+                            <span className={`text-[8px] font-black uppercase tracking-wider ${isSelected ? 'text-amber-400' : 'text-black'}`}>
+                              {ch.badge}
+                            </span>
+                            <span className={`text-[7px] font-medium leading-tight line-clamp-1 ${isSelected ? 'text-gray-300' : 'text-gray-400'}`}>
+                              {ch.description}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -616,7 +786,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                     <Folder size={12} />
-                    <span>{propertyAddress || 'Unnamed Batch'}</span>
+                    <span>{propertyAddress || (studioDomain === 'portrait' ? 'Portrait & Character Studio Session' : studioDomain === 'universal' ? 'Commercial Visuals Session' : 'Architectural & Real Estate Batch')}</span>
                   </div>
                 </div>
 
@@ -826,8 +996,14 @@ export default function Dashboard() {
                           )}
                         </div>
 
-                        {/* Analysis Badge */}
+                        {/* Analysis & Anchor Badges */}
                         <div className="absolute top-4 left-4 flex flex-col gap-2 z-10">
+                          {referenceAnchor?.id === img.id && (
+                            <div className="bg-amber-400 text-black px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-lg font-black text-[8px] uppercase tracking-widest border border-amber-500">
+                              <Anchor size={10} className="stroke-[2.5]" />
+                              <span>/c Anchor</span>
+                            </div>
+                          )}
                           {img.analysis && (
                             <div className="bg-accent text-white px-3 py-1 rounded-full flex items-center gap-1.5 shadow-lg">
                               <Search size={10} />
@@ -858,8 +1034,22 @@ export default function Dashboard() {
                           </div>
                         )}
 
-                        {/* Top Right Actions: Select and Delete */}
+                        {/* Top Right Actions: Anchor, Select and Delete */}
                         <div className="absolute top-4 right-4 flex items-center gap-1.5 z-10">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleReferenceAnchor(img);
+                            }}
+                            className={`p-2 rounded-full backdrop-blur-md transition-all shadow-md cursor-pointer ${
+                              referenceAnchor?.id === img.id
+                                ? 'bg-amber-400 text-black opacity-100 ring-2 ring-amber-500 scale-100'
+                                : 'bg-black/50 text-white/80 opacity-0 group-hover:opacity-100 hover:bg-amber-400 hover:text-black'
+                            }`}
+                            title={referenceAnchor?.id === img.id ? "Unpin /c Consistency Anchor" : "Pin as /c Consistency Anchor"}
+                          >
+                            <Anchor size={12} className={referenceAnchor?.id === img.id ? "stroke-[2.5]" : ""} />
+                          </button>
                           <button
                             onClick={(e) => toggleSelectImage(img.id, e)}
                             className={`p-2 rounded-full backdrop-blur-md transition-all shadow-md ${
@@ -956,6 +1146,8 @@ export default function Dashboard() {
             characterContextCount={characterContextImages.filter(img => img.enabled !== false).length}
             characterContextEnabled={characterContextEnabled}
             onOpenCharacterDrawer={() => setShowCharacterDrawer(true)}
+            isReferenceAnchor={referenceAnchor?.id === selectedImage.id}
+            toggleReferenceAnchor={toggleReferenceAnchor}
           />
         )}
       </AnimatePresence>
@@ -1009,6 +1201,18 @@ export default function Dashboard() {
         setCharacterName={setCharacterName}
         characterNotes={characterNotes}
         setCharacterNotes={setCharacterNotes}
+      />
+
+      <DirectorPanel
+        isOpen={showDirectorDrawer}
+        onClose={() => setShowDirectorDrawer(false)}
+        currentPrompt={prompt}
+        activeImageName={selectedImage?.file.name}
+        referenceAnchorName={referenceAnchor?.title || referenceAnchor?.file.name}
+        mediaType={mediaType}
+        domain={studioDomain}
+        onPullTriggerPlate={pullTriggerPlate}
+        onPullTriggerMotion={pullTriggerMotion}
       />
 
       <Chatbot 
@@ -1151,10 +1355,11 @@ export default function Dashboard() {
                         Creative (Empty)
                       </button>
                       <button 
-                        onClick={() => setSystemInstruction("You are a master professional photography editor. Produce commercial studio-grade clarity, balanced dynamic range, rich natural colors, and crisp details across any photo subject.")}
-                        className="text-[8px] font-black text-gray-400 uppercase hover:text-accent transition-colors"
+                        onClick={() => setSystemInstruction(DOMAIN_DEFAULTS[studioDomain].systemInstruction)}
+                        className="text-[8px] font-black text-amber-500 uppercase hover:text-amber-600 transition-colors"
+                        title="Reset to active Studio Domain prompt"
                       >
-                        Standard
+                        {DOMAIN_DEFAULTS[studioDomain].badge} Default
                       </button>
                     </div>
                   </div>

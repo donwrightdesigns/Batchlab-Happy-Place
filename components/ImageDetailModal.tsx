@@ -15,7 +15,8 @@ import {
   Sparkles, 
   Download, 
   Star, 
-  Trash2 
+  Trash2,
+  Anchor
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -52,6 +53,8 @@ interface ImageDetailModalProps {
   characterContextCount?: number;
   characterContextEnabled?: boolean;
   onOpenCharacterDrawer?: () => void;
+  isReferenceAnchor?: boolean;
+  toggleReferenceAnchor?: (img: ImageFile) => void;
 }
 
 export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
@@ -83,7 +86,9 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
   saveAs,
   characterContextCount = 0,
   characterContextEnabled = false,
-  onOpenCharacterDrawer
+  onOpenCharacterDrawer,
+  isReferenceAnchor = false,
+  toggleReferenceAnchor
 }) => {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-8">
@@ -494,6 +499,21 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
             )}
 
             <div className="flex gap-2">
+              {toggleReferenceAnchor && (
+                <button 
+                  onClick={() => toggleReferenceAnchor(selectedImage)}
+                  className={`flex-1 py-3 rounded-2xl border transition-all flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${
+                    isReferenceAnchor 
+                      ? 'bg-amber-400 text-black border-amber-400 font-black shadow-lg shadow-amber-400/25' 
+                      : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Lock as /c Anchor for subject & material consistency"
+                >
+                  <Anchor className="w-3.5 h-3.5" />
+                  <span>{isReferenceAnchor ? '/c Pinned' : 'Pin /c'}</span>
+                </button>
+              )}
+
               <button 
                 onClick={() => {
                   const isFav = !selectedImage.isFavorite;

@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for Studio Domain Switcher (Architectural vs Portrait vs Universal) and P-Video Engine Integration. Decouples real estate and character portrait workflows completely while adding p-video as an ultra-fast generation engine.",
+  "updatedAt": "2026-11-04T21:14:11.066826755Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

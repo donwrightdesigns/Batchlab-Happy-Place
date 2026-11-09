@@ -11,8 +11,12 @@ import {
   OperationMode, 
   MediaType, 
   VeoOption, 
+  VideoModel,
   ImageModelOption,
-  CharacterContextImage
+  CharacterContextImage,
+  ReferenceAnchor,
+  StudioDomain,
+  DOMAIN_DEFAULTS
 } from '@/lib/gemini';
 import { 
   saveToMemory, 
@@ -52,6 +56,7 @@ export interface ImageFile {
   resultPreview?: string;
   error?: string;
   isFavorite?: boolean;
+  isReferenceAnchor?: boolean;
   analysis?: string;
   isAnalyzing?: boolean;
   usedAnalysis?: boolean;
@@ -76,7 +81,11 @@ export interface QueueJob {
   opMode: OperationMode;
   mediaType: MediaType;
   veoOption: VeoOption;
+  videoModel: VideoModel;
+  choreography?: string;
+  referenceAnchor?: ReferenceAnchor | null;
   imageModelOption: ImageModelOption;
+  domain?: StudioDomain;
   sourceType?: 'original' | 'result';
   sourceBase64?: string;
   title?: string;
@@ -92,7 +101,7 @@ export function useREBE() {
     setIsMounted(true);
   }, []);
 
-  const [prompt, setPrompt] = useState('Professional photo enhancement: studio-grade clarity, balanced dynamic range, rich natural colors, crisp details, clean noise reduction, and optimal exposure.');
+  const [prompt, setPrompt] = useState<string>(DOMAIN_DEFAULTS.arch.prompt);
   const [resolution, setResolution] = useState<ImageResolution>('2K');
   const [aspectRatio, setAspectRatio] = useState<any>('auto');
   const model: ImageModel = 'nano-2';
@@ -120,14 +129,29 @@ export function useREBE() {
     window.addEventListener(QUOTA_EXCEEDED_EVENT, handleQuota);
     return () => window.removeEventListener(QUOTA_EXCEEDED_EVENT, handleQuota);
   }, [hasDismissedQuotaBanner]);
+  const [studioDomain, setStudioDomain] = useState<StudioDomain>('arch');
   const [concurrencyLimit, setConcurrencyLimit] = useState(3);
   const [isBatchMode, setIsBatchMode] = useState(true);
   const [tier, setTier] = useState<ProcessingTier>('flex');
   const [opMode, setOpMode] = useState<OperationMode>('edit');
   const [mediaType, setMediaType] = useState<MediaType>('image');
-  const [veoOption, setVeoOption] = useState<VeoOption>('lite');
+  const [videoModel, setVideoModel] = useState<VideoModel>('pvid');
+  const [veoOption, setVeoOption] = useState<VeoOption>('pvid');
+  const [choreography, setChoreography] = useState<string>('');
+  const [referenceAnchor, setReferenceAnchor] = useState<ImageFile | null>(null);
+  const [showDirectorDrawer, setShowDirectorDrawer] = useState(false);
   const [imageModelOption, setImageModelOption] = useState<ImageModelOption>('flash');
-  const [systemInstruction, setSystemInstruction] = useState("You are a master professional photography editor. Your goal is to produce high-end commercial quality enhancements across diverse subjects (portraits, landscapes, architecture, street, products, and studio photos).\n\nCRITICAL CONSTRAINTS:\n1. Preserve natural textures, sharpness, and original subject identity without artificial artifacts.\n2. Balance highlights, midtones, and shadows for an optimal dynamic range.\n3. Correct color casts and white balance while maintaining authentic tones and vibrant colors.\n4. Enhance micro-contrast, edge sharpness, and clarity.\n5. Clean up noise and compression artifacts seamlessly.\n6. Follow the user's specific creative direction and instructions faithfully.\n\nOutput only the high-quality edited image.");
+  const [systemInstruction, setSystemInstruction] = useState<string>(DOMAIN_DEFAULTS.arch.systemInstruction);
+
+  const handleSwitchDomain = useCallback((newDomain: StudioDomain) => {
+    setStudioDomain(newDomain);
+    const defaults = DOMAIN_DEFAULTS[newDomain];
+    if (defaults) {
+      setPrompt(defaults.prompt);
+      setSystemInstruction(defaults.systemInstruction);
+    }
+    setChoreography('');
+  }, []);
   const [favorites, setFavorites] = useState<FavoritePrompt[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [showRecentPrompts, setShowRecentPrompts] = useState(false);
@@ -548,9 +572,14 @@ export function useREBE() {
             currentJob.tier,
             isCreateMode ? 'create' : 'edit',
             currentJob.mediaType,
-            currentJob.veoOption,
+            currentJob.videoModel || currentJob.veoOption || 'omni',
             currentJob.imageModelOption,
-            activeContext
+            activeContext,
+            3,
+            currentJob.videoModel || 'pvid',
+            currentJob.choreography,
+            currentJob.referenceAnchor,
+            currentJob.domain || studioDomain
           );
 
           let finalResult = result;
@@ -620,7 +649,7 @@ export function useREBE() {
         }
       })(job);
     }
-  }, [concurrencyLimit, characterContextEnabled, characterContextImages, fileToBase64, dataUrlToBlobUrl, user, debouncedSync, addNetworkLog, updateNetworkLog]);
+  }, [concurrencyLimit, characterContextEnabled, characterContextImages, fileToBase64, dataUrlToBlobUrl, user, debouncedSync, addNetworkLog, updateNetworkLog, studioDomain]);
 
   const enqueueJobs = useCallback((jobs: QueueJob[]) => {
     if (jobs.length === 0) return;
@@ -642,6 +671,13 @@ export function useREBE() {
       targetImages.some(t => t.id === img.id) ? { ...img, status: 'queued', error: undefined } : img
     ));
 
+    const refAnchorParam: ReferenceAnchor | null = referenceAnchor ? {
+      id: referenceAnchor.id,
+      name: referenceAnchor.title || referenceAnchor.file?.name || 'Anchor',
+      base64: referenceAnchor.result || referenceAnchor.preview || '',
+      preview: referenceAnchor.resultPreview || referenceAnchor.preview
+    } : null;
+
     const jobs: QueueJob[] = targetImages.map(img => ({
       taskId: crypto.randomUUID(),
       imageId: img.id,
@@ -654,14 +690,18 @@ export function useREBE() {
       opMode: 'edit',
       mediaType: img.mediaType || mediaType,
       veoOption,
+      videoModel,
+      choreography,
+      referenceAnchor: refAnchorParam,
       imageModelOption,
+      domain: studioDomain,
       title: img.title || img.file.name,
       textOverlay: img.textOverlay,
       concept: img.concept
     }));
 
     enqueueJobs(jobs);
-  }, [images, prompt, systemInstruction, resolution, aspectRatio, tier, mediaType, veoOption, imageModelOption, enqueueJobs]);
+  }, [images, prompt, systemInstruction, resolution, aspectRatio, tier, mediaType, veoOption, videoModel, choreography, referenceAnchor, imageModelOption, studioDomain, enqueueJobs]);
 
   const generateBatchPrompts = useCallback(async (
     items: Array<{ id?: string; title?: string; concept?: string; visualPrompt: string; textOverlay?: string; aspectRatio?: any }>,
@@ -694,6 +734,13 @@ export function useREBE() {
 
     setImages(prev => [...prev, ...newImageFiles]);
 
+    const refAnchorParam: ReferenceAnchor | null = referenceAnchor ? {
+      id: referenceAnchor.id,
+      name: referenceAnchor.title || referenceAnchor.file?.name || 'Anchor',
+      base64: referenceAnchor.result || referenceAnchor.preview || '',
+      preview: referenceAnchor.resultPreview || referenceAnchor.preview
+    } : null;
+
     const jobs: QueueJob[] = newImageFiles.map((img, idx) => ({
       taskId: crypto.randomUUID(),
       imageId: img.id,
@@ -706,14 +753,18 @@ export function useREBE() {
       opMode: 'create',
       mediaType: 'image',
       veoOption,
+      videoModel,
+      choreography,
+      referenceAnchor: refAnchorParam,
       imageModelOption,
+      domain: studioDomain,
       title: img.title,
       textOverlay: img.textOverlay,
       concept: img.concept
     }));
 
     enqueueJobs(jobs);
-  }, [aspectRatio, resolution, systemInstruction, tier, veoOption, imageModelOption, enqueueJobs]);
+  }, [aspectRatio, resolution, systemInstruction, tier, veoOption, videoModel, choreography, referenceAnchor, imageModelOption, studioDomain, enqueueJobs]);
 
   const generateTextToImage = useCallback(async (count: number = 1, customPrompt?: string, targetRatio?: any) => {
     const promptToUse = (customPrompt || prompt).trim();
@@ -784,6 +835,13 @@ export function useREBE() {
 
     const isCreateMode = opMode === 'create' || !targetImg.file || targetImg.file.name.endsWith('.svg') || (targetImg.preview && targetImg.preview.startsWith('data:image/svg'));
 
+    const refAnchorParam: ReferenceAnchor | null = referenceAnchor ? {
+      id: referenceAnchor.id,
+      name: referenceAnchor.title || referenceAnchor.file?.name || 'Anchor',
+      base64: referenceAnchor.result || referenceAnchor.preview || '',
+      preview: referenceAnchor.resultPreview || referenceAnchor.preview
+    } : null;
+
     const job: QueueJob = {
       taskId: crypto.randomUUID(),
       imageId: finalTargetId,
@@ -796,7 +854,11 @@ export function useREBE() {
       opMode: isCreateMode ? 'create' : 'edit',
       mediaType: targetImg.mediaType || mediaType,
       veoOption,
+      videoModel,
+      choreography,
+      referenceAnchor: refAnchorParam,
       imageModelOption,
+      domain: studioDomain,
       sourceType: refineSource,
       title: targetImg.title,
       textOverlay: targetImg.textOverlay,
@@ -804,7 +866,58 @@ export function useREBE() {
     };
 
     enqueueJobs([job]);
-  }, [selectedImage, prompt, systemInstruction, resolution, aspectRatio, tier, opMode, mediaType, veoOption, imageModelOption, refineSource, enqueueJobs]);
+  }, [selectedImage, prompt, systemInstruction, resolution, aspectRatio, tier, opMode, mediaType, veoOption, videoModel, choreography, referenceAnchor, imageModelOption, studioDomain, refineSource, enqueueJobs]);
+
+  const toggleReferenceAnchor = useCallback((img: ImageFile) => {
+    setReferenceAnchor(prev => (prev?.id === img.id ? null : img));
+  }, []);
+
+  const pullTriggerPlate = useCallback((targetPrompt: string, targetAspectRatio?: string, targetModel?: string) => {
+    setPrompt(targetPrompt);
+    setMediaType('image');
+    if (targetAspectRatio && targetAspectRatio !== 'auto') {
+      setAspectRatio(targetAspectRatio);
+    }
+    if (targetModel === 'lite' || targetModel === 'flash') {
+      setImageModelOption(targetModel as ImageModelOption);
+    }
+
+    if (imagesRef.current.length > 0) {
+      if (selectedImage?.id) {
+        reprocessSingle(false, selectedImage.id, targetPrompt);
+      } else {
+        processBatch();
+      }
+    } else {
+      setOpMode('create');
+      generateTextToImage(1, targetPrompt, targetAspectRatio);
+    }
+  }, [selectedImage, reprocessSingle, processBatch, generateTextToImage]);
+
+  const pullTriggerMotion = useCallback((targetPrompt: string, targetVideoModel?: string, targetChoreography?: string, targetAspectRatio?: string) => {
+    setPrompt(targetPrompt);
+    setMediaType('video');
+    if (targetVideoModel && ['pvid', 'omni', 'h3', 'seed', 'wan3'].includes(targetVideoModel)) {
+      setVideoModel(targetVideoModel as VideoModel);
+    }
+    if (targetChoreography) {
+      setChoreography(targetChoreography);
+    }
+    if (targetAspectRatio && targetAspectRatio !== 'auto') {
+      setAspectRatio(targetAspectRatio);
+    }
+
+    if (imagesRef.current.length > 0) {
+      if (selectedImage?.id) {
+        reprocessSingle(false, selectedImage.id, targetPrompt);
+      } else {
+        processBatch();
+      }
+    } else {
+      setOpMode('create');
+      generateTextToImage(1, targetPrompt, targetAspectRatio);
+    }
+  }, [selectedImage, reprocessSingle, processBatch, generateTextToImage]);
 
   const cancelTask = useCallback((imageId: string) => {
     queueRef.current = queueRef.current.filter(j => j.imageId !== imageId);
@@ -914,10 +1027,19 @@ export function useREBE() {
     handleRetrySync,
     concurrencyLimit, setConcurrencyLimit,
     isBatchMode, setIsBatchMode,
+    studioDomain, setStudioDomain,
+    handleSwitchDomain,
     tier, setTier,
     opMode, setOpMode,
     mediaType, setMediaType,
+    videoModel, setVideoModel,
     veoOption, setVeoOption,
+    choreography, setChoreography,
+    referenceAnchor, setReferenceAnchor,
+    toggleReferenceAnchor,
+    showDirectorDrawer, setShowDirectorDrawer,
+    pullTriggerPlate,
+    pullTriggerMotion,
     imageModelOption, setImageModelOption,
     systemInstruction, setSystemInstruction,
     favorites, setFavorites,

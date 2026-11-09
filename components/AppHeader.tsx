@@ -9,7 +9,8 @@ import {
   Info,
   X,
   User as UserIcon,
-  Sparkles
+  Sparkles,
+  Clapperboard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from 'firebase/auth';
@@ -23,6 +24,8 @@ interface AppHeaderProps {
   setShowSettingsDrawer: (show: boolean) => void;
   showCharacterDrawer: boolean;
   setShowCharacterDrawer: (show: boolean) => void;
+  showDirectorDrawer?: boolean;
+  setShowDirectorDrawer?: (show: boolean) => void;
   characterContextCount: number;
   characterContextEnabled: boolean;
   isProcessing: boolean;
@@ -49,6 +52,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   setShowSettingsDrawer,
   showCharacterDrawer,
   setShowCharacterDrawer,
+  showDirectorDrawer = false,
+  setShowDirectorDrawer,
   characterContextCount,
   characterContextEnabled,
   isProcessing,
@@ -146,6 +151,26 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                 </button>
               )
             )}
+
+            {/* AI Creative Director Button */}
+            {setShowDirectorDrawer && (
+              <button 
+                onClick={() => setShowDirectorDrawer(!showDirectorDrawer)}
+                className={`p-2 flex items-center gap-2 text-xs font-black uppercase tracking-wider rounded-lg transition-all border cursor-pointer ${
+                  showDirectorDrawer 
+                    ? 'bg-amber-400 text-black border-amber-400 shadow-lg shadow-amber-400/25' 
+                    : 'bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 border-amber-400/30'
+                }`}
+                title="AI Creative Director (Gemini 3.8 Flash)"
+              >
+                <Clapperboard className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">Director</span>
+                <span className="px-1.5 py-0.2 bg-amber-400/20 text-amber-300 text-[8px] font-mono rounded font-black hidden md:inline">
+                  3.8
+                </span>
+              </button>
+            )}
+
             {/* Character Context Button */}
             <button 
               onClick={() => setShowCharacterDrawer(!showCharacterDrawer)}
